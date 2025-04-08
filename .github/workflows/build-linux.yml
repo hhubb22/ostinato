@@ -1,0 +1,54 @@
+name: Linux C++ CI Build
+
+on:
+  push:
+    branches: [master] # Adjust branch names as needed (e.g., master)
+  pull_request:
+    branches: [master] # Adjust branch names as needed
+
+jobs:
+  build-linux:
+    strategy:
+      fail-fast: false # Keep running other matrix jobs even if one fails
+      matrix:
+        compiler: [gcc, clang] # Define the compilers for the matrix
+
+    runs-on: ubuntu-latest # Always run on Linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up C++ Compiler (${{ matrix.compiler }})
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            echo "CXX=g++" >> $GITHUB_ENV
+          elif [ "${{ matrix.compiler }}" = "clang" ]; then
+            echo "CXX=clang++" >> $GITHUB_ENV
+          fi
+
+      - name: Install Linux dependencies (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            qtbase5-dev \
+            qtscript5-dev \
+            libqt5svg5-dev \
+            libpcap-dev \
+            libprotobuf-dev \
+            protobuf-compiler \
+            libnl-3-dev \
+            libnl-route-3-dev \
+            make # Ensure make is present
+
+      - name: Configure build (qmake)
+        run: |
+          # Use QT_SELECT=qt5 as in the original Travis script for Linux,
+          # although just 'qmake' might work if qtbase5-dev sets the default correctly.
+          QT_SELECT=qt5 qmake -config debug
+
+      - name: Build project (make)
+        run: make
+        env:
+          # Ensure the CXX environment variable set earlier is used by make
+          CXX: ${{ env.CXX }}
