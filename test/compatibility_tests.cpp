@@ -677,6 +677,7 @@ void CompatibilityTests::nativeUserScriptsRoundTrip()
         OstProto::Stream restored;
         if (format == 0) {
             OstProto::StreamConfigList list;
+            list.mutable_port_id()->set_id(7);
             *list.add_stream() = source;
             const QString path = dir.filePath("script.ostm");
             QVERIFY2(fileFormat.save(list, path, error), qPrintable(error));
