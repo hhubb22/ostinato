@@ -373,20 +373,27 @@ void takeException(JSContext *context, int fallbackLine,
     JS_FreeValue(context, exception);
 }
 
-JSValue callUserFunction(UserScriptEngine *engine, const char *name,
-                         int argc = 0, JSValueConst *argv = nullptr)
+struct UserFunctionCall
+{
+    JSValue value;
+    bool callable;
+};
+
+UserFunctionCall callUserFunction(UserScriptEngine *engine, const char *name,
+                                  int argc = 0,
+                                  JSValueConst *argv = nullptr)
 {
     JSContext *context = engine->context;
     JSValue function = JS_GetPropertyStr(context, engine->protocol, name);
     if (JS_IsException(function))
-        return function;
+        return {function, true};
     if (!JS_IsFunction(context, function)) {
         JS_FreeValue(context, function);
-        return JS_UNDEFINED;
+        return {JS_UNDEFINED, false};
     }
     JSValue result = JS_Call(context, function, JS_UNDEFINED, argc, argv);
     JS_FreeValue(context, function);
-    return result;
+    return {result, true};
 }
 
 } // namespace
@@ -451,10 +458,12 @@ quint32 UserScriptProtocol::protocolId(ProtocolIdType type) const
         return AbstractProtocol::protocolId(type);
 
     JSValue argument = JS_NewInt32(engine_->context, type);
-    JSValue value = callUserFunction(engine_, "protocolId", 1, &argument);
+    UserFunctionCall call = callUserFunction(
+        engine_, "protocolId", 1, &argument);
     JS_FreeValue(engine_->context, argument);
-    if (JS_IsUndefined(value))
+    if (!call.callable)
         return AbstractProtocol::protocolId(type);
+    JSValue value = call.value;
     if (JS_IsException(value)) {
         takeException(engine_->context, userScriptLineCount(),
                       errorLineNumber_, errorText_);
@@ -500,13 +509,13 @@ QVariant UserScriptProtocol::fieldData(int index, FieldAttrib attrib,
 
             JSContext *context = engine_->context;
             JSValue argument = JS_NewInt32(context, streamIndex);
-            JSValue userValue = callUserFunction(
+            UserFunctionCall call = callUserFunction(
                 engine_, "protocolFrameValue", 1, &argument);
             JS_FreeValue(context, argument);
+            JSValue userValue = call.value;
             if (JS_IsException(userValue)) {
-                takeException(context, userScriptLineCount(),
-                              errorLineNumber_, errorText_);
-                isScriptValid_ = false;
+                JSValue exception = JS_GetException(context);
+                JS_FreeValue(context, exception);
                 return QByteArray();
             }
             QByteArray fv;
@@ -612,8 +621,10 @@ int UserScriptProtocol::protocolFrameSize(int streamIndex) const
 
     JSContext *context = engine_->context;
     JSValue argument = JS_NewInt32(context, streamIndex);
-    JSValue value = callUserFunction(engine_, "protocolFrameSize", 1, &argument);
+    UserFunctionCall call = callUserFunction(
+        engine_, "protocolFrameSize", 1, &argument);
     JS_FreeValue(context, argument);
+    JSValue value = call.value;
     if (JS_IsException(value)) {
         takeException(context, userScriptLineCount(),
                       errorLineNumber_, errorText_);
@@ -657,12 +668,14 @@ quint32 UserScriptProtocol::protocolFrameCksum(int streamIndex,
         JS_NewInt32(context, cksumType),
         JS_NewInt32(context, int(cksumFlags))
     };
-    JSValue value = callUserFunction(engine_, "protocolFrameCksum", 3, arguments);
+    UserFunctionCall call = callUserFunction(
+        engine_, "protocolFrameCksum", 3, arguments);
     for (int i = 0; i < 3; ++i)
         JS_FreeValue(context, arguments[i]);
-    if (JS_IsUndefined(value))
+    if (!call.callable)
         return AbstractProtocol::protocolFrameCksum(
             streamIndex, cksumType, cksumFlags);
+    JSValue value = call.value;
     if (JS_IsException(value)) {
         takeException(context, userScriptLineCount(),
                       errorLineNumber_, errorText_);

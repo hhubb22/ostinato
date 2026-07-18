@@ -245,7 +245,9 @@ private slots:
     void ethernetIpv6UdpGolden();
     void userScriptHostApiAndByteConversion();
     void userScriptHostMethods();
+    void userScriptHostChecksumCompatibility();
     void userScriptRuntimeException();
+    void userScriptDeferredRuntimeException();
     void nativeStreamsRoundTripAndValidation();
     void nativeSessionRoundTrip();
     void rpcHeaderGolden();
@@ -342,7 +344,6 @@ void CompatibilityTests::userScriptHostMethods()
     StreamBase stream;
     UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
         "protocol.reset();\n"
-        "protocol.setName('MethodHost');\n"
         "protocol.setProtocolFrameSizeVariable(true);\n"
         "protocol.setProtocolFrameVariableCount(5);\n"
         "var variable = protocol.isProtocolFrameSizeVariable();\n"
@@ -353,13 +354,50 @@ void CompatibilityTests::userScriptHostMethods()
 
     QVERIFY(script);
     QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
-    QCOMPARE(script->name(), QString("MethodHost:{UserScript} [EXPERIMENTAL]"));
+    QCOMPARE(script->name(), QString(":{UserScript} [EXPERIMENTAL]"));
     QVERIFY(script->isProtocolFrameSizeVariable());
     QCOMPARE(script->protocolFrameVariableCount(), 5);
     QCOMPARE(script->fieldData(UserScriptProtocol::userScript_program,
                                AbstractProtocol::FieldFrameValue)
                  .toByteArray().toHex(),
              QByteArray("0001"));
+}
+
+void CompatibilityTests::userScriptHostChecksumCompatibility()
+{
+    StreamBase stream;
+    UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
+        "protocol.protocolFrameValue = function(i) {\n"
+        "  var header = typeof protocol.protocolFrameHeaderCksum === 'function';\n"
+        "  var payload = protocol.protocolFramePayloadCksum();\n"
+        "  return [protocol.payloadProtocolId(Protocol.ProtocolIdEth),\n"
+        "    protocol.protocolFrameOffset(), protocol.protocolFramePayloadSize(),\n"
+        "    protocol.isProtocolFramePayloadValueVariable() ? 1 : 0,\n"
+        "    protocol.isProtocolFramePayloadSizeVariable() ? 1 : 0,\n"
+        "    protocol.protocolFramePayloadVariableCount(),\n"
+        "    0, header ? 1 : 0, payload >> 8, payload,\n"
+        "    Protocol.CksumIp, Protocol.CksumIpPseudo, Protocol.CksumTcpUdp,\n"
+        "    Protocol.IncludeCksumField];\n"
+        "};\n"
+        "protocol.protocolFrameSize = function(i) { return 14; };\n"
+        "protocol.protocolFrameCksum = function(i, type, flags) {\n"
+        "  if (i === undefined) return 0x1234;\n"
+        "  if (i === 2 && type === Protocol.CksumIp &&\n"
+        "      flags === Protocol.IncludeCksumField) return;\n"
+        "  return 0xabcd;\n"
+        "};"));
+
+    QVERIFY(script);
+    QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+    QCOMPARE(script->fieldData(UserScriptProtocol::userScript_program,
+                               AbstractProtocol::FieldFrameValue)
+                 .toByteArray().toHex(),
+             QByteArray("00002e0000000001ffff00010201"));
+    QCOMPARE(script->protocolFrameCksum(
+                 2, AbstractProtocol::CksumIp,
+                 AbstractProtocol::IncludeCksumField),
+             quint32(0));
+    QVERIFY(script->isScriptValid());
 }
 
 void CompatibilityTests::userScriptRuntimeException()
@@ -380,6 +418,32 @@ void CompatibilityTests::userScriptRuntimeException()
                                AbstractProtocol::FieldFrameValue)
                  .toByteArray(),
              QByteArray());
+}
+
+void CompatibilityTests::userScriptDeferredRuntimeException()
+{
+    StreamBase stream;
+    UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
+        "protocol.protocolFrameValue = function(i) {\n"
+        "  if (i === undefined) return [0];\n"
+        "  if (i === 7) throw new Error('deferred failure');\n"
+        "  return [i];\n"
+        "};\n"
+        "protocol.protocolFrameSize = function(i) { return 1; };"));
+
+    QVERIFY(script);
+    QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+    QCOMPARE(script->fieldData(UserScriptProtocol::userScript_program,
+                               AbstractProtocol::FieldFrameValue, 3)
+                 .toByteArray().toHex(),
+             QByteArray("03"));
+    QCOMPARE(script->fieldData(UserScriptProtocol::userScript_program,
+                               AbstractProtocol::FieldFrameValue, 7)
+                 .toByteArray(),
+             QByteArray());
+    QVERIFY(script->isScriptValid());
+    QCOMPARE(script->userScriptErrorLineNumber(), 6);
+    QCOMPARE(script->userScriptErrorText(), QString());
 }
 
 void CompatibilityTests::nativeStreamsRoundTripAndValidation()
