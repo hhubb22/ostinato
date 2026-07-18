@@ -396,6 +396,36 @@ UserFunctionCall callUserFunction(UserScriptEngine *engine, const char *name,
     return {result, true};
 }
 
+int32_t userValueToInt32(JSContext *context, JSValue value)
+{
+    if (JS_IsException(value))
+        value = JS_GetException(context);
+
+    int32_t result = 0;
+    const int converted = JS_ToInt32(context, &result, value);
+    JS_FreeValue(context, value);
+    if (converted < 0) {
+        JSValue exception = JS_GetException(context);
+        JS_FreeValue(context, exception);
+    }
+    return result;
+}
+
+uint32_t userValueToUint32(JSContext *context, JSValue value)
+{
+    if (JS_IsException(value))
+        value = JS_GetException(context);
+
+    uint32_t result = 0;
+    const int converted = JS_ToUint32(context, &result, value);
+    JS_FreeValue(context, value);
+    if (converted < 0) {
+        JSValue exception = JS_GetException(context);
+        JS_FreeValue(context, exception);
+    }
+    return result;
+}
+
 } // namespace
 
 //
@@ -463,22 +493,7 @@ quint32 UserScriptProtocol::protocolId(ProtocolIdType type) const
     JS_FreeValue(engine_->context, argument);
     if (!call.callable)
         return AbstractProtocol::protocolId(type);
-    JSValue value = call.value;
-    if (JS_IsException(value)) {
-        takeException(engine_->context, userScriptLineCount(),
-                      errorLineNumber_, errorText_);
-        isScriptValid_ = false;
-        return AbstractProtocol::protocolId(type);
-    }
-    uint32_t result = 0;
-    const int converted = JS_ToUint32(engine_->context, &result, value);
-    JS_FreeValue(engine_->context, value);
-    if (converted == 0)
-        return result;
-    takeException(engine_->context, userScriptLineCount(),
-                  errorLineNumber_, errorText_);
-    isScriptValid_ = false;
-    return AbstractProtocol::protocolId(type);
+    return userValueToUint32(engine_->context, call.value);
 }
 
 int UserScriptProtocol::fieldCount() const
@@ -624,23 +639,7 @@ int UserScriptProtocol::protocolFrameSize(int streamIndex) const
     UserFunctionCall call = callUserFunction(
         engine_, "protocolFrameSize", 1, &argument);
     JS_FreeValue(context, argument);
-    JSValue value = call.value;
-    if (JS_IsException(value)) {
-        takeException(context, userScriptLineCount(),
-                      errorLineNumber_, errorText_);
-        isScriptValid_ = false;
-        return 0;
-    }
-    int32_t result = 0;
-    const int converted = JS_ToInt32(context, &result, value);
-    JS_FreeValue(context, value);
-    if (converted < 0) {
-        takeException(context, userScriptLineCount(),
-                      errorLineNumber_, errorText_);
-        isScriptValid_ = false;
-        return 0;
-    }
-    return result;
+    return userValueToInt32(context, call.value);
 }
 
 bool UserScriptProtocol::isProtocolFrameSizeVariable() const
@@ -675,24 +674,7 @@ quint32 UserScriptProtocol::protocolFrameCksum(int streamIndex,
     if (!call.callable)
         return AbstractProtocol::protocolFrameCksum(
             streamIndex, cksumType, cksumFlags);
-    JSValue value = call.value;
-    if (JS_IsException(value)) {
-        takeException(context, userScriptLineCount(),
-                      errorLineNumber_, errorText_);
-        isScriptValid_ = false;
-        return AbstractProtocol::protocolFrameCksum(
-            streamIndex, cksumType, cksumFlags);
-    }
-    uint32_t result = 0;
-    const int converted = JS_ToUint32(context, &result, value);
-    JS_FreeValue(context, value);
-    if (converted == 0)
-        return result;
-    takeException(context, userScriptLineCount(),
-                  errorLineNumber_, errorText_);
-    isScriptValid_ = false;
-    return AbstractProtocol::protocolFrameCksum(
-                                streamIndex, cksumType, cksumFlags);
+    return userValueToUint32(context, call.value);
 }
 
 void UserScriptProtocol::evaluateUserScript() const

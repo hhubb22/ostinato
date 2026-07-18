@@ -248,6 +248,9 @@ private slots:
     void userScriptHostChecksumCompatibility();
     void userScriptRuntimeException();
     void userScriptDeferredRuntimeException();
+    void userScriptDeferredFrameSizeException();
+    void userScriptDeferredProtocolIdException();
+    void userScriptDeferredChecksumException();
     void nativeStreamsRoundTripAndValidation();
     void nativeSessionRoundTrip();
     void rpcHeaderGolden();
@@ -443,6 +446,78 @@ void CompatibilityTests::userScriptDeferredRuntimeException()
              QByteArray());
     QVERIFY(script->isScriptValid());
     QCOMPARE(script->userScriptErrorLineNumber(), 6);
+    QCOMPARE(script->userScriptErrorText(), QString());
+}
+
+void CompatibilityTests::userScriptDeferredFrameSizeException()
+{
+    StreamBase stream;
+    UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
+        "protocol.protocolFrameValue = function() { return [0]; };\n"
+        "protocol.protocolFrameSize = function(i) {\n"
+        "  if (i === 7) throw 7;\n"
+        "  return i === undefined ? 1 : i + 10;\n"
+        "};"));
+
+    QVERIFY(script);
+    QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+    QCOMPARE(script->protocolFrameSize(7), 7);
+    QCOMPARE(script->protocolFrameSize(2), 12);
+    QVERIFY(script->isScriptValid());
+    QCOMPARE(script->userScriptErrorLineNumber(), 5);
+    QCOMPARE(script->userScriptErrorText(), QString());
+}
+
+void CompatibilityTests::userScriptDeferredProtocolIdException()
+{
+    StreamBase stream;
+    UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
+        "protocol.protocolFrameValue = function() { return [0]; };\n"
+        "protocol.protocolFrameSize = function() { return 1; };\n"
+        "protocol.protocolId = function(type) {\n"
+        "  if (type === undefined) return 0;\n"
+        "  if (type === Protocol.ProtocolIdEth) throw new Error('id failure');\n"
+        "  if (type === Protocol.ProtocolIdIp) throw 7;\n"
+        "  if (type === Protocol.ProtocolIdLlc) throw { valueOf: function() { throw new Error('conversion failure'); } };\n"
+        "  return 0x88b5;\n"
+        "};"));
+
+    QVERIFY(script);
+    QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+    QCOMPARE(script->protocolId(AbstractProtocol::ProtocolIdEth), quint32(0));
+    QCOMPARE(script->protocolId(AbstractProtocol::ProtocolIdIp), quint32(7));
+    QCOMPARE(script->protocolId(AbstractProtocol::ProtocolIdLlc), quint32(0));
+    QCOMPARE(script->protocolId(AbstractProtocol::ProtocolIdTcpUdp),
+             quint32(0x88b5));
+    QVERIFY(script->isScriptValid());
+    QCOMPARE(script->userScriptErrorLineNumber(), 9);
+    QCOMPARE(script->userScriptErrorText(), QString());
+}
+
+void CompatibilityTests::userScriptDeferredChecksumException()
+{
+    StreamBase stream;
+    UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
+        "protocol.protocolFrameValue = function() { return [0, 0]; };\n"
+        "protocol.protocolFrameSize = function() { return 2; };\n"
+        "protocol.protocolFrameCksum = function(i, type, flags) {\n"
+        "  if (i === undefined) return 0x1234;\n"
+        "  if (i === 7) throw 7;\n"
+        "  return 0xabcd;\n"
+        "};"));
+
+    QVERIFY(script);
+    QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+    QCOMPARE(script->protocolFrameCksum(
+                 7, AbstractProtocol::CksumIp,
+                 AbstractProtocol::IncludeCksumField),
+             quint32(7));
+    QCOMPARE(script->protocolFrameCksum(
+                 2, AbstractProtocol::CksumIp,
+                 AbstractProtocol::IncludeCksumField),
+             quint32(0xabcd));
+    QVERIFY(script->isScriptValid());
+    QCOMPARE(script->userScriptErrorLineNumber(), 7);
     QCOMPARE(script->userScriptErrorText(), QString());
 }
 
