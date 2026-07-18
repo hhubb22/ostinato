@@ -1,3 +1,101 @@
+# Building Ostinato with CMake
+
+CMake is the recommended build system. The existing qmake project files remain
+available during the migration, but new builds should use CMake.
+
+Ostinato currently requires a C++11 compiler, Qt 5.7 or newer (including the
+Core, Widgets, Network, Script, Xml, Svg, and Test development components),
+Protocol Buffers, and libpcap. Linux builds additionally require libnl3 and
+libnl-route-3.
+
+## Linux
+
+On Debian/Ubuntu, install the build dependencies with:
+
+```bash
+sudo apt-get update
+sudo apt-get install cmake ninja-build g++ \
+  qtbase5-dev qtscript5-dev libqt5svg5-dev \
+  libpcap-dev libprotobuf-dev protobuf-compiler \
+  libnl-3-dev libnl-route-3-dev pkg-config
+```
+
+On Fedora, use:
+
+```bash
+sudo dnf install cmake ninja-build gcc-c++ \
+  qt5-qtbase-devel qt5-qtscript-devel qt5-qtsvg-devel \
+  libpcap-devel protobuf-devel protobuf-compiler libnl3-devel pkgconf-pkg-config
+```
+
+Configure and build an out-of-tree Debug build:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+```
+
+Use `-DCMAKE_BUILD_TYPE=Release` for a Release build. The resulting executables
+are `build/client/ostinato` and `build/server/drone`. Grant `drone` the required
+packet and network administration capabilities before running it:
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin=eip build/server/drone
+```
+
+Install with the normal CMake prefix controls (the default Unix prefix is
+`/usr/local`):
+
+```bash
+cmake --install build
+# or: cmake --install build --prefix /custom/prefix
+```
+
+The controller themes are installed under
+`share/ostinato-controller/themes`, matching the runtime lookup behavior.
+
+## Windows
+
+Install a Qt 5 MSVC kit and Protobuf development package (for example through
+vcpkg), and install the Npcap SDK. Configure from a matching Visual Studio
+developer prompt, passing the package locations as needed:
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_PREFIX_PATH=C:\Qt\5.15.2\msvc2019_64 `
+  -DNPCAP_ROOT=C:\npcap-sdk
+cmake --build build --config Release
+```
+
+`NPCAP_ROOT` must contain the Npcap SDK `Include` and `Lib` directories. The
+build links `wpcap`, `Packet`, and `iphlpapi`, and keeps the existing Vista-or-
+newer API definitions. Windows builds have not been validated as part of this
+initial migration.
+
+## macOS and BSD
+
+Install Qt 5, Protobuf, and libpcap, make them discoverable by CMake, then use
+the same `cmake -S` and `cmake --build` workflow. On macOS the controller is an
+`Ostinato.app` bundle and themes install into its `Contents/SharedSupport`
+directory. macOS and BSD builds have not been validated as part of this initial
+migration.
+
+## Build-system notes
+
+- All `.proto` files are compiled from the source tree into the build tree;
+  pre-generated protobuf sources are neither required nor used.
+- Qt MOC, UIC, and RCC processing is automatic.
+- Debug builds retain the qmake build's strict GCC/Clang warnings. These flags
+  are not passed to MSVC, and generated protobuf sources are exempt from
+  `-Werror` as before.
+- The application revision is captured from Git when CMake configures the
+  build. Re-run CMake after changing revisions if the displayed revision must
+  be refreshed; qmake previously regenerated this file during compilation.
+
+# Legacy qmake instructions
+
+The following instructions are retained temporarily for compatibility.
+
 # General Notes
 
 This document provides instructions for building the project on various platforms. It is recommended to read this section before proceeding to platform-specific instructions.

@@ -20,6 +20,9 @@ Makefile*
 *\object_script.*
 .qmake.stash
 
+# CMake out-of-tree build directories
+/build*/
+
 # protobuf generated files
 *.pb.h
 *.pb.cc

@@ -16,8 +16,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
-#ifndef _IPV4_ADDRESS_DELEGATE
-#define _IPV4_ADDRESS_DELEGATE
+#ifndef _IPV6_ADDRESS_DELEGATE
+#define _IPV6_ADDRESS_DELEGATE
 
 #include "ipv6addressvalidator.h"
 
@@ -57,4 +57,3 @@ inline QWidget* IPv6AddressDelegate::createEditor(QWidget *parent,
     return ipEdit;
 }
 #endif
-
