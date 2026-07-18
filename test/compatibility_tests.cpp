@@ -653,13 +653,15 @@ void CompatibilityTests::nativeUserScriptsRoundTrip()
         QString::fromLatin1(
             "protocol.name='VLAN/MPLS field';\n"
             "protocol.protocolFrameValue=function(i){return [0x81,0,0,1];};\n"
-            "protocol.protocolFrameSize=function(i){if(i===undefined)return; if(i===7)throw 7; return 4;};\n"
-            "protocol.protocolId=function(type){if(type===undefined)return 0; if(type===Protocol.ProtocolIdEth)throw new Error('deferred'); return 0x8100;};"),
+            "protocol.protocolFrameSize=function(i){if(i===7)throw 7; return 4;};\n"
+            "protocol.protocolId=function(type){if(type===undefined)return 0; if(type===Protocol.ProtocolIdEth)throw new Error('deferred'); return 0x8100;};\n"
+            "protocol.protocolFrameCksum=function(i){if(i===undefined)return 0x1234; if(i===2)return; if(i===7)throw 7; if(i===8)throw new Error('checksum'); return 0xabcd;};"),
         QString::fromLatin1(
             "protocol.name='Telemetry shim';\n"
             "protocol.protocolFrameValue=function(i){return [0xde,0xad,0xbe,0xef];};\n"
-            "protocol.protocolFrameSize=function(i){if(i===undefined)return; if(i===7)throw 7; return 4;};\n"
-            "protocol.protocolId=function(type){if(type===undefined)return 0; if(type===Protocol.ProtocolIdEth)throw new Error('deferred'); return 0x88b5;};")
+            "protocol.protocolFrameSize=function(i){if(i===7)throw 7; return 4;};\n"
+            "protocol.protocolId=function(type){if(type===undefined)return 0; if(type===Protocol.ProtocolIdEth)throw new Error('deferred'); return 0x88b5;};\n"
+            "protocol.protocolFrameCksum=function(i){if(i===undefined)return 0x1234; if(i===2)return; if(i===7)throw 7; if(i===8)throw new Error('checksum'); return 0xabcd;};")
     };
 
     for (int format = 0; format < 2; ++format) {
@@ -701,10 +703,24 @@ void CompatibilityTests::nativeUserScriptsRoundTrip()
         UserScriptProtocol *script = userScriptProtocol(stream);
         QVERIFY(script);
         QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
-        QCOMPARE(script->protocolFrameSize(), 0); // Release QtScript undefined -> 0
+        QCOMPARE(script->protocolFrameCksum(
+                     2, AbstractProtocol::CksumIp,
+                     AbstractProtocol::IncludeCksumField),
+                 quint32(0)); // callable returned undefined, no fallback
         QCOMPARE(script->protocolFrameSize(7), 7);
         QCOMPARE(script->protocolId(AbstractProtocol::ProtocolIdEth), quint32(0));
-        QCOMPARE(script->protocolFrameSize(2), 4); // exceptions don't contaminate calls
+        QCOMPARE(script->protocolFrameCksum(
+                     7, AbstractProtocol::CksumIp,
+                     AbstractProtocol::IncludeCksumField),
+                 quint32(7));
+        QCOMPARE(script->protocolFrameCksum(
+                     8, AbstractProtocol::CksumIp,
+                     AbstractProtocol::IncludeCksumField),
+                 quint32(0));
+        QCOMPARE(script->protocolFrameCksum(
+                     3, AbstractProtocol::CksumIp,
+                     AbstractProtocol::IncludeCksumField),
+                 quint32(0xabcd)); // exceptions don't contaminate calls
         QVERIFY(script->isScriptValid());
     }
 }
