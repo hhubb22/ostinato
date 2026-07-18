@@ -3,7 +3,7 @@ CONFIG += qt staticlib
 QT += network
 DEFINES += HAVE_REMOTE
 LIBS += -lprotobuf
-HEADERS += rpcserver.h rpcconn.h pbrpccontroller.h pbrpcchannel.h pbqtio.h
-SOURCES += rpcserver.cpp rpcconn.cpp pbrpcchannel.cpp
+HEADERS += rpcserver.h rpcconn.h pbrpccontroller.h pbrpcchannel.h pbqtio.h versioncompatibility.h
+SOURCES += rpcserver.cpp rpcconn.cpp pbrpcchannel.cpp versioncompatibility.cpp
 
 include (../options.pri)

@@ -7,6 +7,10 @@
 #include "ossnfileformat.h"
 #include "payload.pb.h"
 #include "pbrpccommon.h"
+#include "pbrpcchannel.h"
+#include "pbrpccontroller.h"
+#include "rpcserver.h"
+#include "versioncompatibility.h"
 #include "protocolmanager.h"
 #include "protocollistiterator.h"
 #include "streambase.h"
@@ -17,8 +21,11 @@
 #include "vlan.pb.h"
 
 #include <QFile>
+#include <QHostAddress>
 #include <QTemporaryDir>
 #include <QtTest>
+
+#include <google/protobuf/stubs/callback.h>
 
 #include <cstring>
 
@@ -38,6 +45,43 @@ quint64 getNeighborMacAddress(int, int, int)
 }
 
 namespace {
+
+class TestClosure : public ::google::protobuf::Closure
+{
+public:
+    explicit TestClosure(bool *called) : called_(called) {}
+    void Run() override { *called_ = true; }
+private:
+    bool *called_;
+};
+
+class LoopbackService : public OstProto::OstService
+{
+public:
+    void checkVersion(::google::protobuf::RpcController *controller,
+        const OstProto::VersionInfo *request,
+        OstProto::VersionCompatibility *response,
+        ::google::protobuf::Closure *done) override
+    {
+        const VersionCompatibilityResult result = checkVersionCompatibility(
+            QString::fromStdString(request->version()), "1.2.9");
+        if (result == VersionInvalid)
+            controller->SetFailed("invalid version information");
+        else
+            response->set_result(result == VersionCompatible
+                ? OstProto::VersionCompatibility::kCompatible
+                : OstProto::VersionCompatibility::kIncompatible);
+        done->Run();
+    }
+
+    void getPortIdList(::google::protobuf::RpcController *,
+        const OstProto::Void *, OstProto::PortIdList *response,
+        ::google::protobuf::Closure *done) override
+    {
+        response->add_port_id()->set_id(42);
+        done->Run();
+    }
+};
 
 OstProto::Protocol *addProtocol(OstProto::Stream &stream, quint32 id)
 {
@@ -253,6 +297,9 @@ private slots:
     void userScriptDeferredChecksumException();
     void nativeStreamsRoundTripAndValidation();
     void nativeSessionRoundTrip();
+    void nativeUserScriptsRoundTrip();
+    void versionCompatibility();
+    void rpcLoopbackHandshake();
     void rpcHeaderGolden();
     void rpcIncrementalAndMultipleFrames();
     void rpcRejectsInvalidInput();
@@ -596,6 +643,123 @@ void CompatibilityTests::nativeSessionRoundTrip()
     OstProto::SessionContent restored;
     QVERIFY2(ossnFileFormat.open(path, restored, error), qPrintable(error));
     QCOMPARE(restored.SerializeAsString(), original.SerializeAsString());
+}
+
+void CompatibilityTests::nativeUserScriptsRoundTrip()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString scripts[] = {
+        QString::fromLatin1(
+            "protocol.name='VLAN/MPLS field';\n"
+            "protocol.protocolFrameValue=function(i){return [0x81,0,0,1];};\n"
+            "protocol.protocolFrameSize=function(i){if(i===undefined)return; if(i===7)throw 7; return 4;};\n"
+            "protocol.protocolId=function(type){if(type===undefined)return 0; if(type===Protocol.ProtocolIdEth)throw new Error('deferred'); return 0x8100;};"),
+        QString::fromLatin1(
+            "protocol.name='Telemetry shim';\n"
+            "protocol.protocolFrameValue=function(i){return [0xde,0xad,0xbe,0xef];};\n"
+            "protocol.protocolFrameSize=function(i){if(i===undefined)return; if(i===7)throw 7; return 4;};\n"
+            "protocol.protocolId=function(type){if(type===undefined)return 0; if(type===Protocol.ProtocolIdEth)throw new Error('deferred'); return 0x88b5;};")
+    };
+
+    for (int format = 0; format < 2; ++format) {
+        OstProto::Stream source;
+        source.mutable_stream_id()->set_id(format + 20);
+        source.mutable_core()->set_frame_len(64);
+        OstProto::UserScript *userScript = addProtocol(
+            source, OstProto::Protocol::kUserScriptFieldNumber)
+                ->MutableExtension(OstProto::userScript);
+        userScript->set_program(scripts[format].toStdString());
+        addProtocol(source, OstProto::Protocol::kPayloadFieldNumber)
+            ->MutableExtension(OstProto::payload)->set_pattern(0x12345678);
+
+        QString error;
+        OstProto::Stream restored;
+        if (format == 0) {
+            OstProto::StreamConfigList list;
+            *list.add_stream() = source;
+            const QString path = dir.filePath("script.ostm");
+            QVERIFY2(fileFormat.save(list, path, error), qPrintable(error));
+            OstProto::StreamConfigList opened;
+            QVERIFY2(fileFormat.open(path, opened, error), qPrintable(error));
+            restored = opened.stream(0);
+        } else {
+            OstProto::SessionContent session;
+            *session.add_port_groups()->add_ports()->add_streams() = source;
+            const QString path = dir.filePath("script.ossn");
+            QVERIFY2(ossnFileFormat.save(session, path, error), qPrintable(error));
+            OstProto::SessionContent opened;
+            QVERIFY2(ossnFileFormat.open(path, opened, error), qPrintable(error));
+            restored = opened.port_groups(0).ports(0).streams(0);
+        }
+
+        QCOMPARE(restored.protocol(0).GetExtension(OstProto::userScript).program(),
+                 scripts[format].toStdString());
+        StreamBase stream;
+        stream.protoDataCopyFrom(restored);
+        UserScriptProtocol *script = userScriptProtocol(stream);
+        QVERIFY(script);
+        QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+        QCOMPARE(script->protocolFrameSize(), 0); // Release QtScript undefined -> 0
+        QCOMPARE(script->protocolFrameSize(7), 7);
+        QCOMPARE(script->protocolId(AbstractProtocol::ProtocolIdEth), quint32(0));
+        QCOMPARE(script->protocolFrameSize(2), 4); // exceptions don't contaminate calls
+        QVERIFY(script->isScriptValid());
+    }
+}
+
+void CompatibilityTests::versionCompatibility()
+{
+    QCOMPARE(checkVersionCompatibility("1.2.99", "1.2.0"), VersionCompatible);
+    QCOMPARE(checkVersionCompatibility("2.2", "1.2.0"), VersionIncompatible);
+    QCOMPARE(checkVersionCompatibility("1.3", "1.2.0"), VersionIncompatible);
+    QCOMPARE(checkVersionCompatibility("1", "1.2.0"), VersionInvalid);
+}
+
+void CompatibilityTests::rpcLoopbackHandshake()
+{
+    LoopbackService service;
+    RpcServer server(false);
+    QVERIFY(server.registerService(&service, QHostAddress::LocalHost, 0));
+
+    OstProto::Notification notification;
+    PbRpcChannel channel("127.0.0.1", server.serverPort(), notification);
+    OstProto::OstService::Stub stub(&channel);
+    QSignalSpy connected(&channel, SIGNAL(connected()));
+    channel.establish();
+    QTRY_COMPARE(connected.count(), 1);
+
+    OstProto::VersionInfo *versionRequest = new OstProto::VersionInfo;
+    OstProto::VersionCompatibility *versionResponse =
+        new OstProto::VersionCompatibility;
+    versionRequest->set_version("1.2.123");
+    PbRpcController *versionController = new PbRpcController(
+        versionRequest, versionResponse);
+    bool versionDone = false;
+    TestClosure versionClosure(&versionDone);
+    QCOMPARE(service.GetDescriptor()->FindMethodByName("checkVersion")->index(), 15);
+    stub.checkVersion(versionController, versionRequest, versionResponse,
+                      &versionClosure);
+    QTRY_VERIFY(versionDone);
+    QVERIFY(!versionController->Failed());
+    QCOMPARE(versionResponse->result(),
+             OstProto::VersionCompatibility::kCompatible);
+
+    OstProto::Void *listRequest = new OstProto::Void;
+    OstProto::PortIdList *listResponse = new OstProto::PortIdList;
+    PbRpcController *listController = new PbRpcController(
+        listRequest, listResponse);
+    bool listDone = false;
+    TestClosure listClosure(&listDone);
+    stub.getPortIdList(listController, listRequest, listResponse, &listClosure);
+    QTRY_VERIFY(listDone);
+    QVERIFY(!listController->Failed());
+    QCOMPARE(listResponse->port_id_size(), 1);
+    QCOMPARE(listResponse->port_id(0).id(), quint32(42));
+
+    delete listController;
+    delete versionController;
+    channel.tearDown();
 }
 
 void CompatibilityTests::rpcHeaderGolden()

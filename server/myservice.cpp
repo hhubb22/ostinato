@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include "../common/framevalueattrib.h"
 #include "../common/streambase.h"
 #include "../rpc/pbrpccontroller.h"
+#include "../rpc/versioncompatibility.h"
 #include "device.h"
 #include "devicemanager.h"
 #include "portmanager.h"
@@ -781,7 +782,7 @@ void MyService::checkVersion(::google::protobuf::RpcController* controller,
 {
     QString myVersion(version);
     QString clientVersion;
-    QStringList my, client;
+    QStringList my;
 
     qDebug("In %s", __PRETTY_FUNCTION__);
 
@@ -790,16 +791,16 @@ void MyService::checkVersion(::google::protobuf::RpcController* controller,
     Q_ASSERT(my.size() >= 2);
 
     clientVersion = QString::fromStdString(request->version());
-    client = clientVersion.split('.');
 
     qDebug("client = %s, my = %s", 
             qPrintable(clientVersion), qPrintable(myVersion));
     
-    if (client.size() < 2)
+    const VersionCompatibilityResult compatibility =
+        checkVersionCompatibility(clientVersion, myVersion);
+    if (compatibility == VersionInvalid)
         goto _invalid_version;
 
-    // Compare only major and minor numbers
-    if (client[0] == my[0] && client[1] == my[1]) {
+    if (compatibility == VersionCompatible) {
         response->set_result(OstProto::VersionCompatibility::kCompatible);
         static_cast<PbRpcController*>(controller)->EnableNotif(
             request->client_name() == "python-ostinato" ? false : true);
