@@ -244,6 +244,7 @@ private slots:
     void vlanIpv4UdpGolden();
     void ethernetIpv6UdpGolden();
     void userScriptHostApiAndByteConversion();
+    void userScriptHostMethods();
     void userScriptRuntimeException();
     void nativeStreamsRoundTripAndValidation();
     void nativeSessionRoundTrip();
@@ -334,6 +335,31 @@ void CompatibilityTests::userScriptHostApiAndByteConversion()
                                AbstractProtocol::FieldFrameValue, 2)
                  .toByteArray().toHex(),
              QByteArray("02ff00ff0102"));
+}
+
+void CompatibilityTests::userScriptHostMethods()
+{
+    StreamBase stream;
+    UserScriptProtocol *script = loadUserScript(stream, QString::fromLatin1(
+        "protocol.reset();\n"
+        "protocol.setName('MethodHost');\n"
+        "protocol.setProtocolFrameSizeVariable(true);\n"
+        "protocol.setProtocolFrameVariableCount(5);\n"
+        "var variable = protocol.isProtocolFrameSizeVariable();\n"
+        "protocol.protocolFrameValue = function(i) {\n"
+        "  return [protocol.protocolFrameOffset(i), variable ? 1 : 0];\n"
+        "};\n"
+        "protocol.protocolFrameSize = function(i) { return 2; };"));
+
+    QVERIFY(script);
+    QVERIFY2(script->isScriptValid(), qPrintable(script->userScriptErrorText()));
+    QCOMPARE(script->name(), QString("MethodHost:{UserScript} [EXPERIMENTAL]"));
+    QVERIFY(script->isProtocolFrameSizeVariable());
+    QCOMPARE(script->protocolFrameVariableCount(), 5);
+    QCOMPARE(script->fieldData(UserScriptProtocol::userScript_program,
+                               AbstractProtocol::FieldFrameValue)
+                 .toByteArray().toHex(),
+             QByteArray("0001"));
 }
 
 void CompatibilityTests::userScriptRuntimeException()

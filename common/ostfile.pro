@@ -1,6 +1,6 @@
 TEMPLATE = lib
 CONFIG += qt staticlib
-QT += network xml script
+QT += network xml
 LIBS += \
     -lprotobuf
 
@@ -53,8 +53,6 @@ SOURCES += \
     udppdml.cpp \
     textprotopdml.cpp \
     samplepdml.cpp
-
-QMAKE_DISTCLEAN += object_script.*
 
 include(../protobuf.pri)
 include(../options.pri)

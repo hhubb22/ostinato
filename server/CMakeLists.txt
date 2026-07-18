@@ -12,7 +12,7 @@ set(drone_sources
 add_executable(drone ${drone_sources})
 target_include_directories(drone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(drone PRIVATE
-    ostproto pbrpc Qt5::Core Qt5::Network Qt5::Script Qt5::Xml protobuf::libprotobuf)
+    ostproto pbrpc Qt5::Core Qt5::Network Qt5::Xml protobuf::libprotobuf)
 
 if(WIN32)
     set(NPCAP_ROOT "" CACHE PATH "Npcap SDK root directory")

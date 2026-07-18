@@ -1,7 +1,7 @@
 TEMPLATE = app
 CONFIG += qt ver_info c++11
 addon: CONFIG -= ver_info
-QT += network script xml
+QT += network xml
 QT -= gui
 linux*:system(grep -q IFLA_STATS64 /usr/include/linux/if_link.h): \
     DEFINES += HAVE_IFLA_STATS64
@@ -68,8 +68,6 @@ SOURCES += \
 SOURCES += myservice.cpp 
 SOURCES += pcapextra.cpp 
 SOURCES += packetbuffer.cpp
-
-QMAKE_DISTCLEAN += object_script.*
 
 include (../install.pri)
 include (../version.pri)

@@ -38,7 +38,7 @@ endif()
 target_include_directories(ostinato PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ostinato PRIVATE
     ostfilegui ostfile ostprotogui ostproto pbrpc qhexedit2 protobuf::libprotobuf
-    Qt5::Network Qt5::Script Qt5::Svg Qt5::Widgets Qt5::Xml)
+    Qt5::Network Qt5::Svg Qt5::Widgets Qt5::Xml)
 if(TARGET modeltest)
     target_include_directories(ostinato PRIVATE
         "${PROJECT_SOURCE_DIR}/extra/modeltest")

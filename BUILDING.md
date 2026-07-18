@@ -1,12 +1,14 @@
 # Building Ostinato with CMake
 
-CMake is the recommended build system. The existing qmake project files remain
-available during the migration, but new builds should use CMake.
+CMake is the supported build system. qmake cannot provide the pinned QuickJS
+dependency consistently across supported platforms and is now explicitly
+unsupported; the root `ost.pro` stops with an error instead of producing a
+partially linked build.
 
 Ostinato currently requires a C++11 compiler, Qt 5.7 or newer (including the
-Core, Widgets, Network, Script, Xml, Svg, and Test development components),
-Protocol Buffers, and libpcap. Linux builds additionally require libnl3 and
-libnl-route-3.
+Core, Widgets, Network, Xml, Svg, and Test development components), Protocol
+Buffers, and libpcap. Linux builds additionally require libnl3 and
+libnl-route-3. User scripts use QuickJS-NG 0.15.1; QtScript is not required.
 
 ## Linux
 
@@ -15,7 +17,7 @@ On Debian/Ubuntu, install the build dependencies with:
 ```bash
 sudo apt-get update
 sudo apt-get install cmake ninja-build g++ \
-  qtbase5-dev qtscript5-dev libqt5svg5-dev \
+  qtbase5-dev libqt5svg5-dev \
   libpcap-dev libprotobuf-dev protobuf-compiler \
   libnl-3-dev libnl-route-3-dev pkg-config
 ```
@@ -24,7 +26,7 @@ On Fedora, use:
 
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ \
-  qt5-qtbase-devel qt5-qtscript-devel qt5-qtsvg-devel \
+  qt5-qtbase-devel qt5-qtsvg-devel \
   libpcap-devel protobuf-devel protobuf-compiler libnl3-devel pkgconf-pkg-config
 ```
 
@@ -55,6 +57,39 @@ with CTest:
 cmake --build build --target ostinato_importpcap
 build/test/ostinato_importpcap importpcap capture.pcap
 ```
+
+## QuickJS dependency and offline builds
+
+CMake uses QuickJS-NG 0.15.1 commit
+`fd0a0210b7be00957751871e7e01b8291268fc29`, whose upstream CMake supports
+Linux, MSVC, and macOS. FetchContent downloads that immutable revision archive
+and verifies SHA-256
+`39d931489e99f80b496f900f88d67d7aad6b5f25ce83810a408eb42f6af6839e`.
+Only the core engine target is part of the Ostinato build. The archive includes
+QuickJS-NG's MIT license. Fedora 43 does not currently package QuickJS, so the
+verified FetchContent path is the normal Fedora configuration.
+
+For a fully offline build, download and extract that exact archive in advance,
+then point FetchContent at it (the directory must contain `CMakeLists.txt`,
+`quickjs.c`, and `quickjs.h`):
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DFETCHCONTENT_SOURCE_DIR_QUICKJS=/path/to/quickjs-ng-0.15.1 \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+```
+
+Alternatively, pass explicit paths for an already built system copy:
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DOSTINATO_USE_SYSTEM_QUICKJS=ON \
+  -DQUICKJS_INCLUDE_DIR=/path/to/include \
+  -DQUICKJS_LIBRARY=/path/to/libqjs.a
+```
+
+System QuickJS is opt-in because QuickJS does not have a stable C ABI; the
+default always uses the pinned revision above.
 
 Install with the normal CMake prefix controls (the default Unix prefix is
 `/usr/local`):
@@ -105,9 +140,11 @@ migration.
   build. Re-run CMake after changing revisions if the displayed revision must
   be refreshed; qmake previously regenerated this file during compilation.
 
-# Legacy qmake instructions
+# Historical qmake instructions (unsupported)
 
-The following instructions are retained temporarily for compatibility.
+The material below is retained only as historical platform setup context.
+qmake builds are no longer supported and `qmake ost.pro` intentionally fails;
+use the CMake workflow above.
 
 # General Notes
 
@@ -162,7 +199,7 @@ This guide provides instructions for compiling the project on a Linux system, pr
 Before you begin, ensure you have the following dependencies installed:
 
 *   **C++ Compiler:** A modern C++ compiler that supports C++11 or later (e.g., GCC, Clang).
-*   **Qt5:** The Qt5 development libraries. Specifically, `qtbase5-dev`, `qtscript5-dev`, and `libqt5svg5-dev`.
+*   **Qt5:** The Qt5 development libraries. Specifically, `qtbase5-dev` and `libqt5svg5-dev`.
 *   **libpcap:** The library for network packet capture (`libpcap-dev`).
 *   **Protocol Buffers:** Google's data interchange format (`libprotobuf-dev`, `protobuf-compiler`).
 *   **libnl3:** The Netlink Protocol Library Suite, version 3 (`libnl-3-dev`, `libnl-route-3-dev`).
@@ -177,7 +214,6 @@ sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
   g++ \
   qtbase5-dev \
-  qtscript5-dev \
   libqt5svg5-dev \
   libpcap-dev \
   libprotobuf-dev \

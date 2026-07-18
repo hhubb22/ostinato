@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Ostinato VERSION 1.4.0 LANGUAGES CXX)
+project(Ostinato VERSION 1.4.0 LANGUAGES C CXX)
 
 include(CTest)
 
@@ -10,6 +10,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
+
+if(MSVC)
+    add_link_options(/STACK:8388608)
+endif()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     if(APPLE)
@@ -21,8 +25,36 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 
 find_package(Qt5 5.7 REQUIRED COMPONENTS
-    Core Gui Network Script Svg Test Widgets Xml)
+    Core Gui Network Svg Test Widgets Xml)
 find_package(Protobuf REQUIRED)
+
+option(OSTINATO_USE_SYSTEM_QUICKJS "Use an externally built QuickJS library" OFF)
+if(OSTINATO_USE_SYSTEM_QUICKJS)
+    find_path(QUICKJS_INCLUDE_DIR quickjs.h REQUIRED)
+    find_library(QUICKJS_LIBRARY NAMES quickjs qjs REQUIRED)
+    add_library(QuickJS::QuickJS UNKNOWN IMPORTED)
+    set_target_properties(QuickJS::QuickJS PROPERTIES
+        IMPORTED_LOCATION "${QUICKJS_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${QUICKJS_INCLUDE_DIR}")
+else()
+    include(FetchContent)
+    set(QJS_BUILD_LIBC OFF CACHE BOOL "" FORCE)
+    set(QJS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(QJS_BUILD_WERROR OFF CACHE BOOL "" FORCE)
+    set(QJS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)
+    endif()
+    FetchContent_Declare(quickjs
+        URL https://github.com/quickjs-ng/quickjs/archive/fd0a0210b7be00957751871e7e01b8291268fc29.tar.gz
+        URL_HASH SHA256=39d931489e99f80b496f900f88d67d7aad6b5f25ce83810a408eb42f6af6839e)
+    FetchContent_MakeAvailable(quickjs)
+    set_target_properties(
+        qjsc qjs_exe qjs-libc run-test262 api-test lre-test function_source
+        PROPERTIES
+        EXCLUDE_FROM_ALL TRUE EXCLUDE_FROM_DEFAULT_BUILD TRUE)
+    add_library(QuickJS::QuickJS ALIAS qjs)
+endif()
 
 function(ostinato_target_defaults target)
     target_compile_features(${target} PUBLIC cxx_std_11)

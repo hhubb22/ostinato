@@ -23,10 +23,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include "abstractprotocol.h"
 #include "userscript.pb.h"
 
-#include <QScriptEngine>
-#include <QScriptValue>
-
 class UserScriptProtocol;
+class UserScriptEngine;
 
 class UserProtocol : public QObject
 {
@@ -150,9 +148,8 @@ private:
 
     OstProto::UserScript    data;
 
-    mutable QScriptEngine   engine_;
+    mutable UserScriptEngine *engine_;
     mutable UserProtocol    userProtocol_;
-    mutable QScriptValue    userProtocolScriptValue_;
 
     mutable bool            isScriptValid_;
     mutable int             errorLineNumber_;

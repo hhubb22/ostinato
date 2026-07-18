@@ -51,8 +51,11 @@ add_library(ostproto STATIC
 target_include_directories(ostproto PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(ostproto PUBLIC
-    Qt5::Core Qt5::Network Qt5::Script Qt5::Xml protobuf::libprotobuf)
+    Qt5::Core Qt5::Network Qt5::Xml QuickJS::QuickJS protobuf::libprotobuf)
 ostinato_target_defaults(ostproto)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ostproto PRIVATE -Wno-cast-function-type)
+endif()
 
 ostinato_generate_protos(ostfile_pb_sources ostfile_pb_headers fileformat.proto)
 add_library(ostfile STATIC
@@ -66,7 +69,7 @@ add_library(ostfile STATIC
     ${ostfile_pb_sources} ${ostfile_pb_headers})
 target_include_directories(ostfile PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(ostfile PUBLIC ostproto Qt5::Network Qt5::Script Qt5::Xml protobuf::libprotobuf)
+target_link_libraries(ostfile PUBLIC ostproto Qt5::Network Qt5::Xml protobuf::libprotobuf)
 ostinato_target_defaults(ostfile)
 
 add_library(ostfilegui STATIC
@@ -92,5 +95,5 @@ add_library(ostprotogui STATIC
     userscriptconfig.h vlanconfig.h)
 target_include_directories(ostprotogui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ostprotogui PUBLIC
-    ostproto qhexedit2 Qt5::Network Qt5::Script Qt5::Widgets Qt5::Xml)
+    ostproto qhexedit2 Qt5::Network Qt5::Widgets Qt5::Xml)
 ostinato_target_defaults(ostprotogui)

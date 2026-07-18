@@ -1,7 +1,7 @@
 TEMPLATE = lib
 CONFIG += qt staticlib
 QT -= gui
-QT += network script xml
+QT += network xml
 LIBS += \
     -lprotobuf
 
@@ -119,11 +119,8 @@ SOURCES += \
     sign.cpp \
     userscript.cpp
 
-QMAKE_DISTCLEAN += object_script.*
-
 #binding.depends = compiler_protobuf_py_make_all
 #QMAKE_EXTRA_TARGETS += binding
 
 include(../protobuf.pri)
 include(../options.pri)
-

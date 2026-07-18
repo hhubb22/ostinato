@@ -1,4 +1,5 @@
 TEMPLATE = subdirs
+error("qmake builds are no longer supported; use CMake as documented in BUILDING.md")
 SUBDIRS = client server ostfile ostfilegui ostproto ostprotogui rpc extra
 
 client.target = client

@@ -1,6 +1,6 @@
 TEMPLATE = lib
 CONFIG += qt staticlib
-QT += widgets network xml script
+QT += widgets network xml
 INCLUDEPATH += "../extra/qhexedit2/src"
 
 FORMS += \
@@ -95,7 +95,5 @@ SOURCES += \
     sampleconfig.cpp \
     signconfig.cpp \
     userscriptconfig.cpp
-
-QMAKE_DISTCLEAN += object_script.*
 
 include(../options.pri)

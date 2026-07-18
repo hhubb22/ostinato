@@ -3,7 +3,7 @@ CONFIG += qt ver_info
 macx: TARGET = Ostinato
 win32:RC_FILE = ostinato.rc
 macx:ICON = icons/logo.icns
-QT += widgets network script xml svg
+QT += widgets network xml svg
 INCLUDEPATH += "../rpc/" "../common/"
 
 OBJDIR = .
@@ -135,8 +135,6 @@ THEMES += \
     themes/qds-dark.rcc \
     themes/qds-light.qss \
     themes/qds-light.rcc \
-
-QMAKE_DISTCLEAN += object_script.*
 
 include(../install.pri)
 include(../shared.pri)
