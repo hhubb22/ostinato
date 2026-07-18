@@ -8,6 +8,16 @@ Visit https://ostinato.org for demo video and details
 
 Source License: GPLv3+ (see [COPYING](https://raw.githubusercontent.com/pstavirs/ostinato/master/COPYING))
 
+## Building from source
+
+CMake is the supported build system. See [BUILDING.md](BUILDING.md) for native
+and Docker build instructions. A public `linux/amd64` image with all Linux
+build dependencies is available from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/hhubb22/ostinato-build:latest
+```
+
 ## Author's note
 I have been developing and maintaining Ostinato [single-handedly](https://github.com/pstavirs/ostinato/graphs/contributors) for more than 12 years. And during this time I have grudgingly come around to the view that open source cannot survive and thrive without money. Mixing money with open-source is messy, but I don't see a way forward unless we as a community become open to the idea of talking about it and changing our culture so that money is no longer a bad word.
 

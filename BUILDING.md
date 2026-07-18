@@ -39,9 +39,52 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+### Docker build environment
+
+The public `linux/amd64` image contains the complete Ubuntu build toolchain and
+Linux development dependencies. Pull it from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/hhubb22/ostinato-build:latest
+```
+
+Then mount the source tree and build as the current user. Setting `HOME` to a
+writable directory lets tools that consult it work when the host user does not
+exist in the container's `/etc/passwd`:
+
+```bash
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -v "$PWD:/workspace" \
+  ghcr.io/hhubb22/ostinato-build:latest \
+  bash -c 'cmake -S . -B build-docker -G Ninja \
+    -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON && \
+    cmake --build build-docker --parallel && \
+    ctest --test-dir build-docker --output-on-failure'
+```
+
+The repository also includes the image's Dockerfile. To rebuild it locally
+instead of pulling the published image, run:
+
+```bash
+docker build -t ostinato-build .
+```
+
+Use `ostinato-build` in the `docker run` command above when using the locally
+built image.
+
+Build output is written to `build-docker` in the source tree and remains owned
+by the current host user. QuickJS is downloaded and verified by CMake during
+the first configuration, so the container needs network access for that step.
+For an offline container build, use the `FETCHCONTENT_SOURCE_DIR_QUICKJS`
+option described below and mount the extracted source directory into the
+container.
+
 Use `-DCMAKE_BUILD_TYPE=Release` for a Release build. The resulting executables
-are `build/client/ostinato` and `build/server/drone`. Grant `drone` the required
-packet and network administration capabilities before running it:
+are `<build-dir>/client/ostinato` and `<build-dir>/server/drone` (`build` in the
+host example or `build-docker` in the Docker example). Grant `drone` the
+required packet and network administration capabilities before running it:
 
 ```bash
 sudo setcap cap_net_raw,cap_net_admin=eip build/server/drone
