@@ -740,9 +740,34 @@ void CompatibilityTests::rpcLoopbackHandshake()
     QVERIFY(server.registerService(&service, QHostAddress::LocalHost, 0));
 
     OstProto::Notification notification;
+    {
+        PbRpcChannel gatedChannel(
+            "127.0.0.1", server.serverPort(), notification);
+        OstProto::OstService::Stub gatedStub(&gatedChannel);
+        QSignalSpy connected(&gatedChannel, SIGNAL(connected()));
+        QSignalSpy disconnected(&gatedChannel, SIGNAL(disconnected()));
+        gatedChannel.establish();
+        QTRY_COMPARE(connected.count(), 1);
+
+        OstProto::Void *request = new OstProto::Void;
+        OstProto::PortIdList *response = new OstProto::PortIdList;
+        PbRpcController *controller = new PbRpcController(request, response);
+        bool done = false;
+        TestClosure closure(&done);
+        gatedStub.getPortIdList(controller, request, response, &closure);
+        QTRY_VERIFY(done);
+        QVERIFY(controller->Failed());
+        QCOMPARE(controller->ErrorString(),
+                 QString("version compatibility check pending"));
+        QCOMPARE(response->port_id_size(), 0);
+        QTRY_COMPARE(disconnected.count(), 1);
+        delete controller;
+    }
+
     PbRpcChannel channel("127.0.0.1", server.serverPort(), notification);
     OstProto::OstService::Stub stub(&channel);
     QSignalSpy connected(&channel, SIGNAL(connected()));
+    QSignalSpy disconnected(&channel, SIGNAL(disconnected()));
     channel.establish();
     QTRY_COMPARE(connected.count(), 1);
 
@@ -777,6 +802,7 @@ void CompatibilityTests::rpcLoopbackHandshake()
     delete listController;
     delete versionController;
     channel.tearDown();
+    QTRY_COMPARE(disconnected.count(), 1);
 }
 
 void CompatibilityTests::rpcHeaderGolden()

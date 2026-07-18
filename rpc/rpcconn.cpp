@@ -258,7 +258,7 @@ void RpcConnection::on_clientSock_dataAvail()
     int      msgLen;
     quint16 type, method;
     quint32 len;
-    const ::google::protobuf::MethodDescriptor    *methodDesc;
+    const ::google::protobuf::MethodDescriptor    *methodDesc = NULL;
     ::google::protobuf::Message    *req, *resp;
     PbRpcController *controller;
     QString error;
