@@ -14,35 +14,23 @@ jobs:
         compiler: [gcc, clang] # Define the compilers for the matrix
 
     runs-on: ubuntu-latest # Always run on Linux
+    container: ghcr.io/hhubb22/ostinato-build:latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up C++ Compiler (${{ matrix.compiler }})
+      - name: Set up compiler (${{ matrix.compiler }})
         run: |
           if [ "${{ matrix.compiler }}" = "gcc" ]; then
             echo "CC=gcc" >> $GITHUB_ENV
             echo "CXX=g++" >> $GITHUB_ENV
           elif [ "${{ matrix.compiler }}" = "clang" ]; then
+            apt-get update -qq
+            apt-get install -y --no-install-recommends clang
             echo "CC=clang" >> $GITHUB_ENV
             echo "CXX=clang++" >> $GITHUB_ENV
           fi
-
-      - name: Install Linux dependencies (apt)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            pkg-config \
-            qtbase5-dev \
-            libqt5svg5-dev \
-            libpcap-dev \
-            libprotobuf-dev \
-            protobuf-compiler \
-            libnl-3-dev \
-            libnl-route-3-dev
 
       - name: Configure build (CMake)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
