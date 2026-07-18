@@ -79,17 +79,10 @@ cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 ```
 
-Alternatively, pass explicit paths for an already built system copy:
-
-```bash
-cmake -S . -B build -G Ninja \
-  -DOSTINATO_USE_SYSTEM_QUICKJS=ON \
-  -DQUICKJS_INCLUDE_DIR=/path/to/include \
-  -DQUICKJS_LIBRARY=/path/to/libqjs.a
-```
-
-System QuickJS is opt-in because QuickJS does not have a stable C ABI; the
-default always uses the pinned revision above.
+QuickJS does not have a stable C ABI, so arbitrary system headers and libraries
+are not accepted. Use the pinned source above for both online and offline
+builds. The QuickJS target is always static, including when Ostinato is
+configured with `BUILD_SHARED_LIBS=ON`.
 
 Install with the normal CMake prefix controls (the default Unix prefix is
 `/usr/local`):
