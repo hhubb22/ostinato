@@ -106,14 +106,6 @@ void RpcConnection::start()
         this, SLOT(on_clientSock_error(QAbstractSocket::SocketError)));
 }
 
-void RpcConnection::writeHeader(char* header, quint16 type, quint16 method, 
-                                quint32 length)
-{
-    *((quint16*)(header+0)) = qToBigEndian(type);
-    *((quint16*)(header+2)) = qToBigEndian(method);
-    *((quint32*)(header+4)) = qToBigEndian(length);
-}
-
 void RpcConnection::sendRpcReply(
         const ::google::protobuf::MethodDescriptor *method,
         PbRpcController *controller)
@@ -130,7 +122,8 @@ void RpcConnection::sendRpcReply(
 
         qWarning("rpc failed (%s)", qPrintable(controller->ErrorString()));
         len = err.size();
-        writeHeader(msg, PB_MSG_TYPE_ERROR, pendingMethodId, len);
+        pbRpcEncodeHeader(msg, PB_MSG_TYPE_ERROR, quint16(pendingMethodId),
+                          quint32(len));
         clientSock->write(msg, PB_HDR_SIZE);
         clientSock->write(err.constData(), len);
 
@@ -143,7 +136,8 @@ void RpcConnection::sendRpcReply(
         len = blob->size();
         qDebug("is binary blob of len %d", len);
 
-        writeHeader(msg, PB_MSG_TYPE_BINBLOB, pendingMethodId, len);
+        pbRpcEncodeHeader(msg, PB_MSG_TYPE_BINBLOB, quint16(pendingMethodId),
+                          quint32(len));
         clientSock->write(msg, PB_HDR_SIZE);
 
         blob->seek(0);
@@ -172,7 +166,8 @@ void RpcConnection::sendRpcReply(
     }
 
     len = response->ByteSize();
-    writeHeader(msg, PB_MSG_TYPE_RESPONSE, pendingMethodId, len);
+    pbRpcEncodeHeader(msg, PB_MSG_TYPE_RESPONSE, quint16(pendingMethodId),
+                      quint32(len));
 
     // Avoid printing stats since it happens once every couple of seconds
     if (pendingMethodId != 13)
@@ -228,7 +223,8 @@ void RpcConnection::sendNotification(int notifType,
     }
 
     len = notifData->ByteSize();
-    writeHeader(msg, PB_MSG_TYPE_NOTIFY, notifType, len);
+    pbRpcEncodeHeader(msg, PB_MSG_TYPE_NOTIFY, quint16(notifType),
+                      quint32(len));
 
     qDebug("Server(%s): sending %d bytes to client <----",
         __FUNCTION__, len + PB_HDR_SIZE);
@@ -280,18 +276,30 @@ void RpcConnection::on_clientSock_dataAvail()
         return;
     }
 
-    len = qFromBigEndian<quint32>(&msg[4]);
+    PbRpcHeader header;
+    const bool peekDecoded = pbRpcDecodeHeader(msg, PB_HDR_SIZE, header);
+    Q_ASSERT(peekDecoded);
+    Q_UNUSED(peekDecoded);
+    len = header.length;
+    if (!pbRpcPayloadLengthIsValid(len)) {
+        qWarning("server(%s): invalid payload length %u", __FUNCTION__, len);
+        clientSock->abort();
+        return;
+    }
 
     // Is the full msg available to read? If not, wait till such time
-    if (clientSock->bytesAvailable() < (PB_HDR_SIZE+len))
+    if (clientSock->bytesAvailable() < qint64(PB_HDR_SIZE) + len)
         return;
 
     msgLen = clientSock->read((char*)msg, PB_HDR_SIZE);
     Q_ASSERT(msgLen == PB_HDR_SIZE);
 
-    type = qFromBigEndian<quint16>(&msg[0]);
-    method = qFromBigEndian<quint16>(&msg[2]);
-    len = qFromBigEndian<quint32>(&msg[4]);
+    const bool decoded = pbRpcDecodeHeader(msg, PB_HDR_SIZE, header);
+    Q_ASSERT(decoded);
+    Q_UNUSED(decoded);
+    type = header.type;
+    method = header.method;
+    len = header.length;
     //qDebug("type = %d, method = %d, len = %d", type, method, len);
 
     if (type != PB_MSG_TYPE_REQUEST)

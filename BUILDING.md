@@ -31,8 +31,10 @@ sudo dnf install cmake ninja-build gcc-c++ \
 Configure and build an out-of-tree Debug build:
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Use `-DCMAKE_BUILD_TYPE=Release` for a Release build. The resulting executables
@@ -41,6 +43,17 @@ packet and network administration capabilities before running it:
 
 ```bash
 sudo setcap cap_net_raw,cap_net_admin=eip build/server/drone
+```
+
+`BUILD_TESTING` defaults to `ON`; pass `-DBUILD_TESTING=OFF` to omit automated
+test targets. The tests are deterministic and require neither packet-capture
+permissions nor a GUI display. The legacy `test/test.pro` PCAP import utility is
+available as the manual-only `ostinato_importpcap` target and is not registered
+with CTest:
+
+```bash
+cmake --build build --target ostinato_importpcap
+build/test/ostinato_importpcap importpcap capture.pcap
 ```
 
 Install with the normal CMake prefix controls (the default Unix prefix is

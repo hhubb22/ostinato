@@ -51,8 +51,6 @@ public:
                                  const QMessageLogContext &context,
                                  const QString &msg);
 private:
-    void writeHeader(char* header, quint16 type, quint16 method, 
-                     quint32 length);
     void sendRpcReply(const ::google::protobuf::MethodDescriptor *method,
                       PbRpcController *controller);
 

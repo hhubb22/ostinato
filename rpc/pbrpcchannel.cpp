@@ -145,9 +145,8 @@ void PbRpcChannel::CallMethod(
     isPending = true;
 
     len = req->ByteSize();
-    *((quint16*)(msg+0)) = qToBigEndian(quint16(PB_MSG_TYPE_REQUEST)); // type
-    *((quint16*)(msg+2)) = qToBigEndian(quint16(method->index())); // method id
-    *((quint32*)(msg+4)) = qToBigEndian(quint32(len)); // len
+    pbRpcEncodeHeader(msg, PB_MSG_TYPE_REQUEST, quint16(method->index()),
+                      quint32(len));
 
     // Avoid printing stats since it happens every couple of seconds
     if (pendingMethodId != 13)
@@ -190,9 +189,24 @@ _top:
             goto _exit;
         }
 
-        type = qFromBigEndian<quint16>(msg+0);
-        methodId = qFromBigEndian<quint16>(msg+2);
-        len = qFromBigEndian<quint32>(msg+4);
+        PbRpcHeader header;
+        const bool decoded = pbRpcDecodeHeader(msg, msgLen, header);
+        Q_ASSERT(decoded);
+        Q_UNUSED(decoded);
+        type = header.type;
+        methodId = header.method;
+        len = header.length;
+
+        if (!pbRpcPayloadLengthIsValid(len)) {
+            qWarning("%s: invalid payload length %u", __PRETTY_FUNCTION__, len);
+            emit error(QAbstractSocket::SslInvalidUserDataError);
+            mpSocket->abort();
+            delete inStream;
+            inStream = new google::protobuf::io::CopyingInputStreamAdaptor(
+                            new PbQtInputStream(mpSocket));
+            inStream->SetOwnsCopyingStream(true);
+            goto _exit2;
+        }
 
         if (msgLen > PB_HDR_SIZE)
             inStream->BackUp(msgLen - PB_HDR_SIZE);
@@ -506,4 +520,3 @@ void PbRpcChannel::on_mpSocket_error(QAbstractSocket::SocketError socketError)
     qDebug("In %s", __FUNCTION__);
     emit error(socketError);
 }
-
