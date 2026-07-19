@@ -1,0 +1,16 @@
+syntax = "proto2";
+option cc_generic_services = true;
+package pbrpc_test;
+message Data { required string value = 1; }
+service TestService {
+  rpc m0(Data) returns (Data); rpc m1(Data) returns (Data);
+  rpc m2(Data) returns (Data); rpc m3(Data) returns (Data);
+  rpc m4(Data) returns (Data); rpc m5(Data) returns (Data);
+  rpc m6(Data) returns (Data); rpc m7(Data) returns (Data);
+  rpc m8(Data) returns (Data); rpc m9(Data) returns (Data);
+  rpc m10(Data) returns (Data); rpc m11(Data) returns (Data);
+  rpc m12(Data) returns (Data); rpc m13(Data) returns (Data);
+  rpc m14(Data) returns (Data); rpc checkVersion(Data) returns (Data);
+  rpc echo(Data) returns (Data); rpc fail(Data) returns (Data);
+  rpc blob(Data) returns (Data); rpc disconnect(Data) returns (Data);
+}
