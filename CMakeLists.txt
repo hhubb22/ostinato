@@ -161,6 +161,14 @@ if(UNIX AND TARGET ostinato_client_core)
         "${CMAKE_CURRENT_SOURCE_DIR}/controller")
     target_link_libraries(ostinato-controller PRIVATE
         ostinato_client_core protobuf::libprotobuf)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # The desktop package places its private runtime closure beside the
+        # controller. Development still falls back to system libraries.
+        set_target_properties(ostinato-controller PROPERTIES
+            BUILD_RPATH "$ORIGIN"
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "$ORIGIN")
+    endif()
     ostinato_target_defaults(ostinato-controller)
     install(TARGETS ostinato-controller RUNTIME DESTINATION bin)
 endif()

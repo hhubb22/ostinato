@@ -23,6 +23,13 @@ Svelte 5 renderer
 - Electron main owns child creation, request deadlines, stderr logging, clean
   shutdown, TERM/KILL fallback, response correlation, controller output schema
   validation, and renderer sender/argument validation.
+- Exactly one non-shutdown state transition may be in flight. Concurrent
+  renderer calls fail immediately with `controller busy`; shutdown is a single
+  independent request and is never put behind a renderer-side queue. Connect
+  and reconnect have 60 s aggregate deadlines because hydration contains many
+  independently bounded 2 s RPCs; disconnect has 5 s and shutdown 1.5 s.
+  Expiry destroys that controller session with bounded TERM then KILL and waits
+  for `close`, so a late response cannot become an unknown request ID.
 - The renderer splits connection, ports, stats, and selection into separate
   Svelte stores. A stats snapshot enters the stats store once; keyed rows then
   update from that batch.
@@ -63,8 +70,9 @@ npm run typecheck
 npm run lint
 npm run test:unit
 npm run test:e2e         # xvfb + actual stage-A drone + Electron
+npm test                 # unit + native/build prerequisites + actual E2E
 npm run build
-npm run package:linux    # release/linux-unpacked
+npm run package:linux    # build, stage closure, package, isolated verification
 npm run measure:linux    # measures that unpacked app through /proc
 ```
 
@@ -84,6 +92,15 @@ The package always uses `resources/controller/ostinato-controller`, regardless
 of environment. A Vite URL is likewise accepted only for an unpackaged app and
 only as a plain loopback HTTP origin. Production loads its bundled `file:` page.
 
+On Linux the controller has a literal `$ORIGIN` RUNPATH. Packaging stages the
+controller with the resolved protobuf SONAME and its zlib dependency; each
+private shared object also receives `$ORIGIN` RUNPATH. `package:linux` fails if
+`readelf`/`ldd` does not show that closure under packaged resources. It then
+copies the unpacked app outside the checkout, probes the copied controller over
+framed stdio, launches the copied packaged app with a sanitized environment and
+no development override, closes it, and asserts controller reap. glibc,
+libstdc++, libgcc, libm, and the ELF loader remain Linux platform baselines.
+
 ## Stage 7.1 Linux measurements
 
 Measured 2026-07-19 in the x86-64 E2B orb under Xvfb. These are one-run,
@@ -95,14 +112,16 @@ checks the controller PID after close.
 
 | Check | Result |
 | --- | ---: |
-| Unpacked directory | 316,032,112 bytes (302 MiB) |
-| `app.asar` | 4,882,800 bytes |
-| packaged controller | 560,992 bytes |
-| cold launch to renderer controls | 591 ms |
-| disconnected idle, 6 processes | 561.7 MiB summed RSS / 273.6 MiB summed PSS |
-| connected 500 ms updates, 6 processes | 583.2 MiB summed RSS / 284.5 MiB summed PSS |
+| Unpacked directory | 320,025,781 bytes (306 MiB) |
+| `app.asar` | 4,888,745 bytes |
+| controller closure | 4,548,776 bytes |
+| packaged controller | 565,264 bytes |
+| bundled protobuf / zlib | 3,857,496 / 125,888 bytes |
+| cold launch to renderer controls | 540 ms |
+| disconnected idle, 6 processes | 561.2 MiB summed RSS / 275.8 MiB summed PSS |
+| connected 500 ms updates, 6 processes | 582.3 MiB summed RSS / 286.7 MiB summed PSS |
 | virtual model / mounted rows | 2,000 / 19 |
-| observed virtual update-to-animation-frame | 2.2 ms |
+| observed virtual update-to-animation-frame | 2.0 ms |
 | controller after app close | reaped |
 
 The packaged runtime was Electron 41.5.2, embedded Node 24.15.0, and Chromium
@@ -125,9 +144,13 @@ disconnected, reconnected and rehydrated, then closed without sending traffic.
   ancestors, unsafe inline script, and unsafe evaluation. New windows and
   renderer navigation are denied.
 - Shutdown is bounded. Controller RPC operations use finite deadlines, main
-  requests use finite deadlines, Electron escalates shutdown from protocol to
-  TERM/KILL, and Linux `PR_SET_PDEATHSIG(SIGKILL)` covers abrupt parent death.
-  No detached thread or detached child is used.
+  requests use operation-specific finite deadlines, timeout destroys the whole
+  session, Electron escalates from protocol to TERM/KILL and settles even if a
+  post-KILL close event is not observed, and Linux `PR_SET_PDEATHSIG(SIGKILL)`
+  covers abrupt parent death. No detached thread or detached child is used.
+- Controller event/response writes are checked. Encoding, frame-size, or stdout
+  failures disconnect and terminate instead of leaving a connected but stale
+  renderer; an oversized snapshot first emits a small controlled framed error.
 - This slice was built and exercised only on Linux x86-64. Packaging paths and
   process signalling need explicit Windows/macOS implementation and testing.
   The current C++ controller target is POSIX-only because its underlying

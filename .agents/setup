@@ -11,6 +11,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libprotobuf-dev \
   libqt5svg5-dev \
   ninja-build \
+  patchelf \
   pkg-config \
   protobuf-compiler \
   qtbase5-dev \

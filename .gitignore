@@ -28,6 +28,7 @@ Makefile*
 /desktop/dist-electron/
 /desktop/dist-renderer/
 /desktop/release/
+/desktop/staged-controller/
 /desktop/playwright-report/
 /desktop/test-results/
 
