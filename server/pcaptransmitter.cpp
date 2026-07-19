@@ -40,8 +40,10 @@ PcapTransmitter::~PcapTransmitter()
 {
     if (txThread_.isRunning())
         txThread_.stop();
+    txThread_.wait();
     if (txStats_.isRunning())
         txStats_.stop();
+    txStats_.wait();
 }
 
 bool PcapTransmitter::setRateAccuracy(

@@ -4,7 +4,7 @@ class QThread: public QObject {
  std::thread thread_; std::atomic<bool> running_{false}; QString name_; std::function<void()> finished_;
 public:
  virtual ~QThread(){wait();} virtual void run(){}
- void start(){wait();running_=true;thread_=std::thread([this]{run();running_=false;if(finished_)finished_();});}
+ void start(){wait();running_=true;thread_=std::thread([this]{run();if(finished_)finished_();running_=false;});}
  void setFinishedCallback(std::function<void()> callback){finished_=std::move(callback);}
  bool isRunning()const{return running_;} bool wait(unsigned long=~0UL){if(thread_.joinable())thread_.join();return true;}
  void setObjectName(const QString&n){name_=n;}

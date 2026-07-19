@@ -22,9 +22,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include <QThread>
 #include <pcap.h>
+#include <csignal>
 
 #ifdef Q_OS_UNIX
-#include <QHash>
 #include <pthread.h>
 class ThreadId {
 public:
@@ -71,7 +71,8 @@ private:
     static void signalBreakHandler(int /*signum*/);
 
     ThreadId thread_;
-    static QHash<ThreadId, bool> signalSeen_;
+    volatile sig_atomic_t signalSeen_{0};
+    static thread_local PcapSession *activeSession_;
 
     struct pcap_stat lastPcapStats_;
 };

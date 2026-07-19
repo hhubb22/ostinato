@@ -224,6 +224,8 @@ bool PcapRxStats::stop()
     else
         qWarning("RxStats stop requested but is not running!");
 
+    wait();
+
     return true;
 }
 

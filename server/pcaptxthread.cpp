@@ -416,8 +416,8 @@ void PcapTxThread::stop()
     else {
         // FIXME: return error
         qWarning("Transmit stop requested but is not running!");
-        return;
     }
+    wait();
 }
 
 bool PcapTxThread::isRunning()

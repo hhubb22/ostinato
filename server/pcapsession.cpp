@@ -88,19 +88,20 @@ bool PcapSession::clearDebugStats()
 
 #define MY_BREAK_SIGNAL SIGUSR1
 
-QHash<ThreadId, bool> PcapSession::signalSeen_;
+thread_local PcapSession *PcapSession::activeSession_ = nullptr;
 
 void PcapSession::preRun()
 {
     // Should be called in the thread's context
     thread_ = pthread_self();
+    activeSession_ = this;
+    signalSeen_ = 0;
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     sa.sa_handler = PcapSession::signalBreakHandler;
     if (!sigaction(MY_BREAK_SIGNAL, &sa, NULL)) {
-        signalSeen_[thread_] = false;
         qDebug("Break signal handler installed");
     }
     else
@@ -110,22 +111,15 @@ void PcapSession::preRun()
 void PcapSession::postRun()
 {
     // Should be called in the thread's context
-    ThreadId id = pthread_self();
     qDebug("In %s::%s", typeid(*this).name(), __FUNCTION__);
-    if (!signalSeen_.contains(id)) {
-        qWarning("Thread not found in signalSeen");
-        return;
-    }
-
-    bool &seen = signalSeen_[id];
     // XXX: don't exit the thread until we see the signal; if we don't
     // some platforms will crash
-    if (!seen) {
+    if (!signalSeen_) {
         qDebug("Wait for signal");
-        while (!seen)
+        while (!signalSeen_)
             QThread::msleep(10);
     }
-    signalSeen_.remove(id);
+    activeSession_ = nullptr;
     qDebug("Signal seen and handled");
 }
 
@@ -143,7 +137,7 @@ void PcapSession::stop()
 
 void PcapSession::signalBreakHandler(int /*signum*/)
 {
-    qDebug("In %s", __FUNCTION__);
-    signalSeen_[pthread_self()] = true;
+    if (activeSession_)
+        activeSession_->signalSeen_ = 1;
 }
 #endif

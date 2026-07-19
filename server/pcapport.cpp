@@ -403,6 +403,7 @@ PcapPort::PortCapturer::~PortCapturer()
 {
     if (isRunning())
         stop();
+    wait();
     capFile_.close();
 }
 
@@ -518,8 +519,8 @@ void PcapPort::PortCapturer::stop()
     else {
         // FIXME: return error
         qWarning("Capture stop requested but is not running!");
-        return;
     }
+    wait();
 }
 
 bool PcapPort::PortCapturer::isRunning()
@@ -553,6 +554,7 @@ PcapPort::EmulationTransceiver::~EmulationTransceiver()
 {
     if (isRunning())
         stop();
+    wait();
 }
 
 void PcapPort::EmulationTransceiver::run()
@@ -742,8 +744,8 @@ void PcapPort::EmulationTransceiver::stop()
     }
     else {
         qWarning("Emulation Xcvr stop requested but is not running!");
-        return;
     }
+    wait();
 }
 
 bool PcapPort::EmulationTransceiver::isRunning()

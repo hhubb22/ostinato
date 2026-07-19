@@ -65,6 +65,7 @@ void PcapTxStats::stop()
 
     while (isRunning())
         QThread::msleep(10);
+    wait();
 }
 
 void PcapTxStats::run()

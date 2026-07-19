@@ -176,6 +176,8 @@ bool PcapTxTtagStats::stop()
     else
         qWarning("TxTtagStats stop requested but is not running!");
 
+    wait();
+
     return true;
 }
 

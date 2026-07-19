@@ -75,7 +75,7 @@ private:
 
     google::protobuf::Service *service_; // not owned
     Options options_;
-    int listenFd_ = -1;
+    std::atomic<int> listenFd_{-1};
     std::uint16_t boundPort_ = 0;
     std::atomic<bool> running_{false};
     std::thread acceptThread_;

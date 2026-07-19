@@ -170,7 +170,7 @@ void TcpRpcServer::removeClosedConnections() {
 }
 void TcpRpcServer::stop() {
     if (!running_.exchange(false)) return;
-    const int fd = listenFd_; listenFd_ = -1; if (fd >= 0) { ::shutdown(fd, SHUT_RDWR); ::close(fd); }
+    const int fd = listenFd_.exchange(-1); if (fd >= 0) { ::shutdown(fd, SHUT_RDWR); ::close(fd); }
     if (acceptThread_.joinable()) acceptThread_.join();
     std::vector<std::shared_ptr<Connection>> connections;
     { std::lock_guard<std::mutex> lock(connectionsMutex_); connections.swap(connections_); }
