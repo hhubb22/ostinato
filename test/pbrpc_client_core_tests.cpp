@@ -3,9 +3,13 @@
 #include "pbrpc_server_test.pb.h"
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstdlib>
+#include <functional>
+#include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -45,7 +49,8 @@ public:
     void waitForSlow() {
         std::unique_lock<std::mutex> lock(mutex_);
         const unsigned expected = slowWaited_ + 1;
-        condition_.wait(lock, [this, expected] { return slowEntered_ >= expected; });
+        CHECK(condition_.wait_for(lock, seconds(5),
+            [this, expected] { return slowEntered_ >= expected; }));
         ++slowWaited_;
     }
     void releaseSlow() {
@@ -77,12 +82,220 @@ static TcpRpcClient::Result invoke(TcpRpcClient &client, int index,
     return result;
 }
 
+class Gate {
+public:
+    void enterAndWait()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        entered_ = true;
+        condition_.notify_all();
+        CHECK(condition_.wait_for(lock, seconds(5), [this] { return released_; }));
+    }
+    void arrive()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        entered_ = true;
+        condition_.notify_all();
+    }
+    void waitUntilEntered()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        CHECK(condition_.wait_for(lock, seconds(5), [this] { return entered_; }));
+    }
+    void release()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        released_ = true;
+        condition_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    bool entered_ = false;
+    bool released_ = false;
+};
+
+static void testConnectInterruption(std::uint16_t port,
+                                    ClientConnectTestPhase phase,
+                                    TcpRpcClient::Error expected,
+                                    const std::function<void(TcpRpcClient &)> &interrupt)
+{
+    TcpRpcClient client;
+    Gate gate;
+    setClientConnectTestHook([&](ClientConnectTestPhase current) {
+        if (current == phase)
+            gate.enterAndWait();
+    });
+    TcpRpcClient::Result result;
+    std::thread connector([&] {
+        result = client.connect("127.0.0.1", port, seconds(2));
+    });
+    gate.waitUntilEntered();
+    CHECK(!client.connected());
+    interrupt(client);
+    gate.release();
+    connector.join();
+    setClientConnectTestHook({});
+    CHECK(result.error == expected);
+    CHECK(!client.connected());
+}
+
+static std::unique_ptr<TcpRpcClient> connectedClient(std::uint16_t port)
+{
+    std::unique_ptr<TcpRpcClient> client(new TcpRpcClient);
+    CHECK(client->connect("127.0.0.1", port, seconds(2)));
+    CHECK(invoke(*client, 15, "version"));
+    CHECK(invoke(*client, 16, "compatibility barrier"));
+    return client;
+}
+
+static void testDestructorWaitsForNotification(TcpRpcServer &server)
+{
+    auto client = connectedClient(server.port());
+    Gate callbackGate;
+    client->setNotificationCallback(
+        [&](std::uint16_t, const std::vector<std::uint8_t> &) {
+            callbackGate.enterAndWait();
+        });
+    pbrpc_test::Data notice;
+    notice.set_value("destructor notification");
+    server.broadcastNotification(44, notice);
+    TcpRpcClient *raw = client.get();
+    TcpRpcClient::Result callResult;
+    std::thread caller([&] { callResult = invoke(*raw, 16, "notification barrier"); });
+    callbackGate.waitUntilEntered();
+    Gate destructorStarted;
+    setClientDestructorTestHook([&] { destructorStarted.arrive(); });
+    std::promise<void> destroyed;
+    auto destroyedFuture = destroyed.get_future();
+    std::thread destroyer([&] { client.reset(); destroyed.set_value(); });
+    destructorStarted.waitUntilEntered();
+    CHECK(destroyedFuture.wait_for(milliseconds(30)) == std::future_status::timeout);
+    callbackGate.release();
+    CHECK(destroyedFuture.wait_for(seconds(5)) == std::future_status::ready);
+    caller.join();
+    destroyer.join();
+    CHECK(callResult);
+    setClientDestructorTestHook({});
+}
+
+static void testDestructorWaitsForBlobSink(std::uint16_t port)
+{
+    auto client = connectedClient(port);
+    Gate sinkGate;
+    TcpRpcClient *raw = client.get();
+    pbrpc_test::Data request, response;
+    request.set_value("large");
+    TcpRpcClient::Result callResult;
+    std::thread caller([&] {
+        callResult = raw->call(method(18), request, &response, seconds(2), nullptr,
+            [&](const std::uint8_t *, std::size_t) {
+                sinkGate.enterAndWait();
+                return true;
+            });
+    });
+    sinkGate.waitUntilEntered();
+    Gate destructorStarted;
+    setClientDestructorTestHook([&] { destructorStarted.arrive(); });
+    std::promise<void> destroyed;
+    auto destroyedFuture = destroyed.get_future();
+    std::thread destroyer([&] { client.reset(); destroyed.set_value(); });
+    destructorStarted.waitUntilEntered();
+    CHECK(destroyedFuture.wait_for(milliseconds(30)) == std::future_status::timeout);
+    sinkGate.release();
+    CHECK(destroyedFuture.wait_for(seconds(5)) == std::future_status::ready);
+    caller.join();
+    destroyer.join();
+    CHECK(callResult);
+    setClientDestructorTestHook({});
+}
+
+static void testDestructorRejectsQueuedConnect(Service &service, std::uint16_t port)
+{
+    auto client = connectedClient(port);
+    TcpRpcClient *raw = client.get();
+    TcpRpcClient::Result slowResult, connectResult;
+    std::thread slow([&] { slowResult = invoke(*raw, 20, "hold call lock", seconds(10)); });
+    service.waitForSlow();
+    Gate admittedGate;
+    setClientConnectTestHook([&](ClientConnectTestPhase phase) {
+        if (phase == ClientConnectTestPhase::ConnectAdmitted)
+            admittedGate.enterAndWait();
+    });
+    std::thread connector([&] {
+        connectResult = raw->connect("127.0.0.1", port, seconds(2));
+    });
+    admittedGate.waitUntilEntered();
+    Gate destructorGate;
+    setClientDestructorTestHook([&] { destructorGate.enterAndWait(); });
+    std::thread destroyer([&] { client.reset(); });
+    destructorGate.waitUntilEntered();
+    destructorGate.release();
+    admittedGate.release();
+    slow.join();
+    connector.join();
+    destroyer.join();
+    setClientConnectTestHook({});
+    setClientDestructorTestHook({});
+    service.releaseSlow();
+    CHECK(slowResult.error == TcpRpcClient::Error::Disconnected);
+    CHECK(connectResult.error == TcpRpcClient::Error::Disconnected);
+}
+
+static void testOldSinkCannotDisconnectNewGeneration(std::uint16_t port)
+{
+    auto client = connectedClient(port);
+    Gate sinkGate;
+    pbrpc_test::Data request, response;
+    request.set_value("large");
+    TcpRpcClient::Result rejected;
+    std::thread caller([&] {
+        rejected = client->call(method(18), request, &response, seconds(2), nullptr,
+            [&](const std::uint8_t *, std::size_t) {
+                sinkGate.enterAndWait();
+                return false;
+            });
+    });
+    sinkGate.waitUntilEntered();
+    CHECK(client->connect("127.0.0.1", port, seconds(2)));
+    CHECK(invoke(*client, 15, "new generation"));
+    sinkGate.release();
+    caller.join();
+    CHECK(rejected.error == TcpRpcClient::Error::Protocol);
+    CHECK(client->connected());
+    CHECK(invoke(*client, 16, "new generation remains usable"));
+}
+
 int main()
 {
     Service service;
     TcpRpcServer::Options options; options.address = "127.0.0.1";
     TcpRpcServer server(&service, options);
     std::string error; CHECK(server.start(&error));
+
+    testConnectInterruption(server.port(), ClientConnectTestPhase::CandidatePublished,
+                            TcpRpcClient::Error::Canceled,
+                            [](TcpRpcClient &client) { client.cancel(); });
+    testConnectInterruption(server.port(), ClientConnectTestPhase::CandidatePublished,
+                            TcpRpcClient::Error::Disconnected,
+                            [](TcpRpcClient &client) { client.disconnect(); });
+    testConnectInterruption(server.port(), ClientConnectTestPhase::BeforeSocketConnect,
+                            TcpRpcClient::Error::Canceled,
+                            [](TcpRpcClient &client) { client.cancel(); });
+    testConnectInterruption(server.port(), ClientConnectTestPhase::BeforeSocketConnect,
+                            TcpRpcClient::Error::Disconnected,
+                            [](TcpRpcClient &client) { client.disconnect(); });
+    testConnectInterruption(server.port(), ClientConnectTestPhase::SocketConnected,
+                            TcpRpcClient::Error::Canceled,
+                            [](TcpRpcClient &client) { client.cancel(); });
+    testConnectInterruption(server.port(), ClientConnectTestPhase::SocketConnected,
+                            TcpRpcClient::Error::Disconnected,
+                            [](TcpRpcClient &client) { client.disconnect(); });
+    testDestructorWaitsForNotification(server);
+    testDestructorWaitsForBlobSink(server.port());
+    testDestructorRejectsQueuedConnect(service, server.port());
+    testOldSinkCannotDisconnectNewGeneration(server.port());
 
     TcpRpcClient client;
     CHECK(client.connect("127.0.0.1", server.port(), seconds(2)));

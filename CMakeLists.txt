@@ -176,7 +176,9 @@ if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
                 ${pbrpc_server_test_sources} ${pbrpc_server_test_headers})
             target_include_directories(pbrpc_client_core_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
             target_link_libraries(pbrpc_client_core_tests PRIVATE
-                pbrpc_client_core pbrpc_server_core)
+                pbrpc_client_core_testing pbrpc_server_core)
+            target_compile_definitions(pbrpc_client_core_tests PRIVATE
+                PBRPC_CLIENT_CORE_TESTING)
             ostinato_target_defaults(pbrpc_client_core_tests)
             add_test(NAME pbrpc_client_core COMMAND pbrpc_client_core_tests)
             if(TARGET ostinato_client_core)

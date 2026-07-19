@@ -15,28 +15,118 @@
 
 namespace pbrpc {
 
-namespace { struct FileCloser { void operator()(std::FILE *file) const { if (file) std::fclose(file); } }; }
+namespace {
+struct FileCloser {
+    void operator()(std::FILE *file) const { if (file) std::fclose(file); }
+};
+
+#ifdef PBRPC_CLIENT_CORE_TESTING
+std::mutex connectTestHookMutex;
+ClientConnectTestHook connectTestHook;
+ClientDestructorTestHook destructorTestHook;
+
+void runConnectTestHook(ClientConnectTestPhase phase)
+{
+    ClientConnectTestHook hook;
+    {
+        std::lock_guard<std::mutex> lock(connectTestHookMutex);
+        hook = connectTestHook;
+    }
+    if (hook)
+        hook(phase);
+}
+
+void runDestructorTestHook()
+{
+    ClientDestructorTestHook hook;
+    {
+        std::lock_guard<std::mutex> lock(connectTestHookMutex);
+        hook = destructorTestHook;
+    }
+    if (hook)
+        hook();
+}
+#endif
+} // namespace
+
+#ifdef PBRPC_CLIENT_CORE_TESTING
+void setClientConnectTestHook(ClientConnectTestHook hook)
+{
+    std::lock_guard<std::mutex> lock(connectTestHookMutex);
+    connectTestHook = std::move(hook);
+}
+
+void setClientDestructorTestHook(ClientDestructorTestHook hook)
+{
+    std::lock_guard<std::mutex> lock(connectTestHookMutex);
+    destructorTestHook = std::move(hook);
+}
+#endif
 
 struct TcpRpcClient::Connection {
     Connection(int socket, std::uint64_t value) : fd(socket), generation(value) {}
     ~Connection() { ::close(fd); }
+    enum State { Connecting, Connected };
     const int fd;
     const std::uint64_t generation;
+    std::atomic<int> state{Connecting};
     std::atomic<int> interrupted{0}; // zero, Canceled, or Disconnected
     std::vector<std::uint8_t> pending;
+};
+
+class TcpRpcClient::Invocation {
+public:
+    explicit Invocation(TcpRpcClient *client)
+        : client_(client), active_(client_->beginInvocation()) {}
+    ~Invocation()
+    {
+        if (active_)
+            client_->endInvocation();
+    }
+    explicit operator bool() const { return active_; }
+
+private:
+    TcpRpcClient *client_;
+    bool active_;
 };
 
 TcpRpcClient::TcpRpcClient(std::uint32_t maxPayload) : maxPayload_(maxPayload) {}
 TcpRpcClient::~TcpRpcClient()
 {
+    {
+        std::lock_guard<std::mutex> lock(invocationMutex_);
+        shuttingDown_ = true;
+    }
     interrupt(Error::Disconnected);
-    std::lock_guard<std::mutex> barrier(callMutex_);
+#ifdef PBRPC_CLIENT_CORE_TESTING
+    runDestructorTestHook();
+#endif
+    std::unique_lock<std::mutex> lock(invocationMutex_);
+    invocationCv_.wait(lock, [this] { return activeInvocations_ == 0; });
+}
+
+bool TcpRpcClient::beginInvocation()
+{
+    std::lock_guard<std::mutex> lock(invocationMutex_);
+    if (shuttingDown_)
+        return false;
+    ++activeInvocations_;
+    return true;
+}
+
+void TcpRpcClient::endInvocation()
+{
+    std::lock_guard<std::mutex> lock(invocationMutex_);
+    if (--activeInvocations_ == 0)
+        invocationCv_.notify_all();
 }
 
 bool TcpRpcClient::connected() const
 {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    return static_cast<bool>(connection_);
+    return connection_ &&
+        connection_->state.load() == Connection::Connected &&
+        connection_->interrupted.load() == 0;
 }
 
 void TcpRpcClient::interrupt(Error reason)
@@ -103,11 +193,23 @@ TcpRpcClient::Result TcpRpcClient::wait(const std::shared_ptr<Connection> &conne
 TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_t port,
                                            std::chrono::milliseconds timeout)
 {
+    Invocation invocation(this);
+    if (!invocation)
+        return {Error::Disconnected, "RPC client is shutting down"};
+#ifdef PBRPC_CLIENT_CORE_TESTING
+    runConnectTestHook(ClientConnectTestPhase::ConnectAdmitted);
+#endif
     std::lock_guard<std::mutex> callLock(callMutex_);
-    interrupt(Error::Disconnected);
     const Clock::time_point deadline = Clock::now() + timeout;
     std::uint64_t operation;
-    { std::lock_guard<std::mutex> lock(stateMutex_); operation = generation_; }
+    {
+        std::lock_guard<std::mutex> invocationLock(invocationMutex_);
+        if (shuttingDown_)
+            return {Error::Disconnected, "RPC client is shutting down"};
+        interrupt(Error::Disconnected);
+        std::lock_guard<std::mutex> stateLock(stateMutex_);
+        operation = generation_;
+    }
     addrinfo hints = {}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_NUMERICHOST;
     addrinfo *addresses = nullptr;
@@ -127,16 +229,64 @@ TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_
         std::shared_ptr<Connection> candidate(new Connection(fd, operation));
         { std::lock_guard<std::mutex> lock(stateMutex_); if (generation_ != operation) {
             result = {Error::Disconnected, "connect interrupted"}; break; } connection_ = candidate; }
-        if (::connect(fd, it->ai_addr, it->ai_addrlen) == 0) result = {};
+#ifdef PBRPC_CLIENT_CORE_TESTING
+        runConnectTestHook(ClientConnectTestPhase::CandidatePublished);
+#endif
+        if (candidate->interrupted.load()) {
+            result = {static_cast<Error>(candidate->interrupted.load()),
+                      "connect interrupted"};
+            break;
+        }
+#ifdef PBRPC_CLIENT_CORE_TESTING
+        runConnectTestHook(ClientConnectTestPhase::BeforeSocketConnect);
+#endif
+        {
+            std::lock_guard<std::mutex> invocationLock(invocationMutex_);
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            const int interrupted = candidate->interrupted.load();
+            if (shuttingDown_ || connection_ != candidate || generation_ != operation
+                    || interrupted) {
+                result = {interrupted ? static_cast<Error>(interrupted)
+                                      : Error::Disconnected,
+                          "connect interrupted"};
+                break;
+            }
+        }
+        bool socketConnected = false;
+        if (::connect(fd, it->ai_addr, it->ai_addrlen) == 0)
+            socketConnected = true;
         else if (errno == EINPROGRESS) {
             result = wait(candidate, POLLOUT, deadline);
             if (result) {
                 int error = 0; socklen_t length = sizeof(error);
                 if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) < 0 || error)
                     result = fail(candidate, Error::Transport, std::strerror(error ? error : errno), true);
+                else
+                    socketConnected = true;
             }
         } else result = fail(candidate, Error::Transport, std::strerror(errno), true);
-        if (result) break;
+        const int interrupted = candidate->interrupted.load();
+        if (!socketConnected && interrupted) {
+            result = {static_cast<Error>(interrupted), "connect interrupted"};
+            break;
+        }
+        if (socketConnected) {
+#ifdef PBRPC_CLIENT_CORE_TESTING
+            runConnectTestHook(ClientConnectTestPhase::SocketConnected);
+#endif
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            const int interrupted = candidate->interrupted.load();
+            if (connection_ != candidate || generation_ != operation || interrupted) {
+                result = {interrupted ? static_cast<Error>(interrupted)
+                                      : Error::Disconnected,
+                          "connect interrupted"};
+            } else {
+                candidate->state = Connection::Connected;
+                result = {};
+            }
+        }
+        if (result)
+            break;
         if (result.error == Error::Canceled || result.error == Error::Disconnected || result.error == Error::Timeout) break;
         fail(candidate, result.error, result.message, true);
     }
@@ -211,6 +361,9 @@ TcpRpcClient::Result TcpRpcClient::call(const google::protobuf::MethodDescriptor
     const google::protobuf::Message &request, google::protobuf::Message *response,
     std::chrono::milliseconds timeout, std::vector<std::uint8_t> *blob, BlobSink blobSink)
 {
+    Invocation invocation(this);
+    if (!invocation)
+        return {Error::Disconnected, "RPC client is shutting down"};
     struct Notice { std::uint16_t method; std::vector<std::uint8_t> payload; };
     std::vector<Notice> notices;
     std::unique_ptr<std::FILE, FileCloser> blobSpool(blobSink ? std::tmpfile() : nullptr);
@@ -220,7 +373,8 @@ TcpRpcClient::Result TcpRpcClient::call(const google::protobuf::MethodDescriptor
         std::lock_guard<std::mutex> lock(callMutex_);
         std::shared_ptr<Connection> connection;
         { std::lock_guard<std::mutex> stateLock(stateMutex_); connection = connection_; }
-        if (!connection) return {Error::Disconnected, "RPC client is not connected"};
+        if (!connection || connection->state.load() != Connection::Connected)
+            return {Error::Disconnected, "RPC client is not connected"};
         if (!method || method->index() < 0 || method->index() > std::numeric_limits<std::uint16_t>::max()
                 || request.GetDescriptor() != method->input_type()
                 || (response && response->GetDescriptor() != method->output_type()))
@@ -264,7 +418,8 @@ TcpRpcClient::Result TcpRpcClient::call(const google::protobuf::MethodDescriptor
             if (!count) break;
             if (blob) blob->insert(blob->end(), chunk, chunk + count);
             bool accepted = false; try { accepted = blobSink(chunk, count); } catch (...) {}
-            if (!accepted) { interrupt(Error::Protocol); return {Error::Protocol, "binary blob sink rejected data"}; }
+            if (!accepted)
+                return {Error::Protocol, "binary blob sink rejected data"};
         }
     }
     return result;

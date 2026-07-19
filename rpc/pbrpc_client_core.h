@@ -8,6 +8,7 @@
 #include <google/protobuf/message.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdint>
 #include <functional>
@@ -17,6 +18,16 @@
 #include <vector>
 
 namespace pbrpc {
+
+#ifdef PBRPC_CLIENT_CORE_TESTING
+enum class ClientConnectTestPhase {
+    ConnectAdmitted, CandidatePublished, BeforeSocketConnect, SocketConnected
+};
+using ClientConnectTestHook = std::function<void(ClientConnectTestPhase)>;
+void setClientConnectTestHook(ClientConnectTestHook hook);
+using ClientDestructorTestHook = std::function<void()>;
+void setClientDestructorTestHook(ClientDestructorTestHook hook);
+#endif
 
 class TcpRpcClient {
 public:
@@ -39,7 +50,7 @@ public:
     TcpRpcClient &operator=(const TcpRpcClient &) = delete;
 
     // Hostname lookup is deliberately excluded: numeric IPv4/IPv6 makes the
-    // supplied deadline and cancellation apply to every connect stage.
+    // supplied per-connect deadline and cancellation apply to every stage.
     Result connect(const std::string &numericHost, std::uint16_t port,
                    std::chrono::milliseconds timeout);
     void disconnect();
@@ -53,8 +64,16 @@ public:
     void cancel();
     void setNotificationCallback(NotificationCallback callback);
 
+    // Calls are serialized and only one request is pending on the wire. The
+    // order in which concurrent callers acquire that serialization lock is
+    // unspecified; std::mutex does not provide FIFO admission. A call timeout
+    // is per RPC, not an aggregate application-operation deadline. Notification
+    // callbacks run after wire completion and may issue a nested call. A
+    // callback or sink must not synchronously destroy its own client.
+
 private:
     struct Connection;
+    class Invocation;
     typedef std::chrono::steady_clock Clock;
     Result wait(const std::shared_ptr<Connection> &, short, Clock::time_point);
     Result writeAll(const std::shared_ptr<Connection> &, const std::uint8_t *,
@@ -67,6 +86,8 @@ private:
     void interrupt(Error reason);
     Result fail(const std::shared_ptr<Connection> &, Error, const std::string &,
                 bool detach);
+    bool beginInvocation();
+    void endInvocation();
 
     const std::uint32_t maxPayload_;
     mutable std::mutex stateMutex_;
@@ -75,6 +96,10 @@ private:
     std::mutex callMutex_;
     std::mutex callbackMutex_;
     NotificationCallback notificationCallback_;
+    std::mutex invocationMutex_;
+    std::condition_variable invocationCv_;
+    std::size_t activeInvocations_ = 0;
+    bool shuttingDown_ = false;
 };
 
 } // namespace pbrpc

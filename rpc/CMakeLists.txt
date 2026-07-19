@@ -8,6 +8,18 @@ if(UNIX)
     target_link_libraries(pbrpc_client_core PUBLIC pbrpc_core protobuf::libprotobuf pthread)
     ostinato_target_defaults(pbrpc_client_core)
 
+    if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
+        add_library(pbrpc_client_core_testing STATIC
+            pbrpc_client_core.cpp pbrpc_client_core.h)
+        target_include_directories(pbrpc_client_core_testing PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(pbrpc_client_core_testing PUBLIC
+            pbrpc_core protobuf::libprotobuf pthread)
+        target_compile_definitions(pbrpc_client_core_testing PRIVATE
+            PBRPC_CLIENT_CORE_TESTING)
+        ostinato_target_defaults(pbrpc_client_core_testing)
+    endif()
+
     add_library(pbrpc_server_core STATIC pbrpc_server_core.cpp pbrpc_server_core.h)
     target_include_directories(pbrpc_server_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(pbrpc_server_core PUBLIC pbrpc_core protobuf::libprotobuf)
