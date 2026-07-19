@@ -22,6 +22,9 @@
 
 #include <QFile>
 #include <QHostAddress>
+#include <QProcess>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -300,6 +303,9 @@ private slots:
     void nativeUserScriptsRoundTrip();
     void versionCompatibility();
     void rpcLoopbackHandshake();
+#ifdef OSTINATO_QTFREE_DRONE_PATH
+    void qtClientToQtFreeDrone();
+#endif
     void rpcHeaderGolden();
     void rpcIncrementalAndMultipleFrames();
     void rpcRejectsInvalidInput();
@@ -804,6 +810,123 @@ void CompatibilityTests::rpcLoopbackHandshake()
     channel.tearDown();
     QTRY_COMPARE(disconnected.count(), 1);
 }
+
+#ifdef OSTINATO_QTFREE_DRONE_PATH
+void CompatibilityTests::qtClientToQtFreeDrone()
+{
+    QTcpServer portAllocator;
+    QVERIFY(portAllocator.listen(QHostAddress::LocalHost, 0));
+    const quint16 port = portAllocator.serverPort();
+    portAllocator.close();
+
+    QProcess droneProcess;
+    droneProcess.setProcessChannelMode(QProcess::MergedChannels);
+    droneProcess.start(OSTINATO_QTFREE_DRONE_PATH,
+                       {"-d", "-p", QString::number(port)});
+    QVERIFY2(droneProcess.waitForStarted(), qPrintable(droneProcess.errorString()));
+
+    bool listening = false;
+    for (int attempt = 0; attempt < 100 && !listening; ++attempt) {
+        QTcpSocket probe;
+        probe.connectToHost(QHostAddress::LocalHost, port);
+        listening = probe.waitForConnected(100);
+        if (!listening)
+            QTest::qWait(50);
+    }
+    QVERIFY2(listening, droneProcess.readAll().constData());
+
+    OstProto::Notification notification;
+    PbRpcChannel channel("127.0.0.1", port, notification);
+    OstProto::OstService::Stub stub(&channel);
+    QSignalSpy connected(&channel, SIGNAL(connected()));
+    channel.establish();
+    QTRY_COMPARE(connected.count(), 1);
+
+    auto *versionRequest = new OstProto::VersionInfo;
+    auto *versionResponse = new OstProto::VersionCompatibility;
+    versionRequest->set_version("1.4.99");
+    versionRequest->set_client_name("qt-compatibility-test");
+    auto *versionController = new PbRpcController(versionRequest, versionResponse);
+    bool versionDone = false;
+    TestClosure versionClosure(&versionDone);
+    stub.checkVersion(versionController, versionRequest, versionResponse, &versionClosure);
+    QTRY_VERIFY(versionDone);
+    QVERIFY2(!versionController->Failed(), qPrintable(versionController->ErrorString()));
+    QCOMPARE(versionResponse->result(), OstProto::VersionCompatibility::kCompatible);
+
+    auto *request = new OstProto::Void;
+    auto *response = new OstProto::PortIdList;
+    auto *controller = new PbRpcController(request, response);
+    bool done = false;
+    TestClosure closure(&done);
+    stub.getPortIdList(controller, request, response, &closure);
+    QTRY_VERIFY(done);
+    QVERIFY2(!controller->Failed(), qPrintable(controller->ErrorString()));
+
+    QVERIFY(response->port_id_size() > 0);
+    const quint32 portId = response->port_id(0).id();
+
+    auto *statsRequest = new OstProto::PortIdList;
+    statsRequest->add_port_id()->set_id(portId);
+    auto *statsResponse = new OstProto::PortStatsList;
+    auto *statsController = new PbRpcController(statsRequest, statsResponse);
+    bool statsDone = false;
+    TestClosure statsClosure(&statsDone);
+    stub.getStats(statsController, statsRequest, statsResponse, &statsClosure);
+    QTRY_VERIFY(statsDone);
+    QVERIFY2(!statsController->Failed(), qPrintable(statsController->ErrorString()));
+    QCOMPARE(statsResponse->port_stats_size(), 1);
+
+    auto *devicesRequest = new OstProto::PortId;
+    devicesRequest->set_id(portId);
+    auto *devicesResponse = new OstProto::PortDeviceList;
+    auto *devicesController = new PbRpcController(devicesRequest, devicesResponse);
+    bool devicesDone = false;
+    TestClosure devicesClosure(&devicesDone);
+    stub.getDeviceList(devicesController, devicesRequest, devicesResponse, &devicesClosure);
+    QTRY_VERIFY(devicesDone);
+    QVERIFY2(!devicesController->Failed(), qPrintable(devicesController->ErrorString()));
+
+    auto *startCaptureRequest = new OstProto::PortIdList;
+    startCaptureRequest->add_port_id()->set_id(portId);
+    auto *startCaptureResponse = new OstProto::Ack;
+    auto *startCaptureController = new PbRpcController(
+        startCaptureRequest, startCaptureResponse);
+    bool startCaptureDone = false;
+    TestClosure startCaptureClosure(&startCaptureDone);
+    stub.startCapture(startCaptureController, startCaptureRequest,
+                      startCaptureResponse, &startCaptureClosure);
+    QTRY_VERIFY(startCaptureDone);
+    QVERIFY2(!startCaptureController->Failed(),
+             qPrintable(startCaptureController->ErrorString()));
+    QCOMPARE(startCaptureResponse->status(), OstProto::Ack::kRpcSuccess);
+
+    auto *stopCaptureRequest = new OstProto::PortIdList;
+    stopCaptureRequest->add_port_id()->set_id(portId);
+    auto *stopCaptureResponse = new OstProto::Ack;
+    auto *stopCaptureController = new PbRpcController(
+        stopCaptureRequest, stopCaptureResponse);
+    bool stopCaptureDone = false;
+    TestClosure stopCaptureClosure(&stopCaptureDone);
+    stub.stopCapture(stopCaptureController, stopCaptureRequest,
+                     stopCaptureResponse, &stopCaptureClosure);
+    QTRY_VERIFY(stopCaptureDone);
+    QVERIFY2(!stopCaptureController->Failed(),
+             qPrintable(stopCaptureController->ErrorString()));
+    QCOMPARE(stopCaptureResponse->status(), OstProto::Ack::kRpcSuccess);
+
+    delete stopCaptureController;
+    delete startCaptureController;
+    delete devicesController;
+    delete statsController;
+    delete controller;
+    delete versionController;
+    channel.tearDown();
+    droneProcess.terminate();
+    QVERIFY2(droneProcess.waitForFinished(10000), droneProcess.readAll().constData());
+    QCOMPARE(droneProcess.exitStatus(), QProcess::NormalExit);
+}
+#endif
 
 void CompatibilityTests::rpcHeaderGolden()
 {

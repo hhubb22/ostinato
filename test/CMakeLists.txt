@@ -7,6 +7,12 @@ if(BUILD_TESTING)
     ostinato_target_defaults(ostinato_compatibility_tests)
     ostinato_qt_target(ostinato_compatibility_tests)
 
+    if(TARGET drone)
+        add_dependencies(ostinato_compatibility_tests drone)
+        target_compile_definitions(ostinato_compatibility_tests PRIVATE
+            OSTINATO_QTFREE_DRONE_PATH="$<TARGET_FILE:drone>")
+    endif()
+
     add_test(NAME compatibility COMMAND ostinato_compatibility_tests)
 endif()
 
