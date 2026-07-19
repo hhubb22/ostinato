@@ -150,6 +150,7 @@ class Controller {
 public:
     bool send(const Struct &value)
     {
+        sendFailure_ = SendFailure::None;
         std::string json;
         google::protobuf::util::JsonPrintOptions options;
         options.add_whitespace = false;
@@ -158,11 +159,13 @@ public:
         if (!status.ok()) {
             std::cerr << "controller: JSON serialization failed: "
                       << status.ToString() << '\n';
+            sendFailure_ = SendFailure::Serialization;
             return false;
         }
         const auto bytes = ostinato::controller::encodeFrame(FrameType::Json, json);
         if (bytes.empty()) {
             std::cerr << "controller: outgoing frame exceeds maximum\n";
+            sendFailure_ = SendFailure::Oversize;
             return false;
         }
         std::size_t written = 0;
@@ -175,13 +178,13 @@ public:
             }
             if (count < 0 && errno == EINTR)
                 continue;
-            stopped = 1;
+            sendFailure_ = SendFailure::Io;
             return false;
         }
         return true;
     }
 
-    void status(const std::string &state, const std::string &message = {})
+    bool status(const std::string &state, const std::string &message = {})
     {
         Struct payload;
         put(payload, "state", stringValue(state));
@@ -193,104 +196,105 @@ public:
             put(endpoint, "port", numberValue(port_));
             put(payload, "endpoint", structValue(endpoint));
         }
-        event("status", payload);
+        return event("status", payload);
     }
 
-    void protocolError(const std::string &message)
+    bool protocolError(const std::string &message)
     {
         Struct payload;
         put(payload, "code", stringValue("protocol"));
         put(payload, "message", stringValue(message));
-        event("protocolError", payload);
+        return event("protocolError", payload);
     }
+
+    bool failed() const { return fatalOutput_; }
 
     bool handle(const Frame &frame)
     {
-        if (frame.type != static_cast<std::uint8_t>(FrameType::Json)) {
-            protocolError("unsupported frame type");
-            return true;
-        }
+        if (frame.type != static_cast<std::uint8_t>(FrameType::Json))
+            return protocolError("unsupported frame type");
         Struct request;
         const std::string json(frame.payload.begin(), frame.payload.end());
         google::protobuf::util::JsonParseOptions options;
         options.ignore_unknown_fields = false;
         const auto parse = google::protobuf::util::JsonStringToMessage(
             json, &request, options);
-        if (!parse.ok()) {
-            protocolError("malformed JSON control payload");
-            return true;
-        }
+        if (!parse.ok())
+            return protocolError("malformed JSON control payload");
 
         std::string kind, id, command;
         if (!stringField(request, "kind", kind) || kind != "request" ||
                 !stringField(request, "id", id) || !validRequestId(id) ||
-                !stringField(request, "command", command)) {
-            protocolError("invalid request envelope");
-            return true;
-        }
+                !stringField(request, "command", command))
+            return protocolError("invalid request envelope");
         if (request.fields().size() > 4 ||
-                (request.fields().size() == 4 && !field(request, "args"))) {
-            response(id, false, "invalid-request", "unknown request field");
-            return true;
-        }
+                (request.fields().size() == 4 && !field(request, "args")))
+            return response(id, false, "invalid-request", "unknown request field");
 
         if (command == "connect")
-            connect(id, request);
+            return connect(id, request);
         else if (command == "disconnect") {
             if (!emptyArgs(request))
-                response(id, false, "invalid-argument", "disconnect takes no arguments");
+                return response(id, false, "invalid-argument", "disconnect takes no arguments");
             else {
                 session_.disconnect();
-                ports(false);
-                status("disconnected", "Disconnected by user");
-                response(id, true);
+                if (!ports(false) ||
+                        !status("disconnected", "Disconnected by user"))
+                    return false;
+                return response(id, true);
             }
         } else if (command == "reconnect") {
             if (!emptyArgs(request))
-                response(id, false, "invalid-argument", "reconnect takes no arguments");
+                return response(id, false, "invalid-argument", "reconnect takes no arguments");
             else if (host_.empty())
-                response(id, false, "invalid-state", "no previous endpoint");
+                return response(id, false, "invalid-state", "no previous endpoint");
             else
-                reconnect(id);
+                return reconnect(id);
         } else if (command == "shutdown") {
             if (!emptyArgs(request))
-                response(id, false, "invalid-argument", "shutdown takes no arguments");
+                return response(id, false, "invalid-argument", "shutdown takes no arguments");
             else {
                 session_.disconnect();
-                response(id, true);
+                const bool sent = response(id, true);
                 stopped = 1;
+                return sent;
             }
         } else {
-            response(id, false, "unknown-command", "unknown command");
+            return response(id, false, "unknown-command", "unknown command");
         }
-        return true;
     }
 
-    void pollStats()
+    bool pollStats()
     {
         if (!session_.connected())
-            return;
+            return true;
         const auto result = session_.pollStats(kRpcTimeout);
         if (!result) {
             session_.disconnect();
-            ports(false);
-            status("error", errorCode(result.error) + ": " + result.message);
-            return;
+            return ports(false) &&
+                status("error", errorCode(result.error) + ": " + result.message);
         }
-        ports(true);
+        return ports(true);
     }
 
 private:
-    void event(const std::string &name, const Struct &payload)
+    enum class SendFailure {
+        None,
+        Serialization,
+        Oversize,
+        Io
+    };
+
+    bool event(const std::string &name, const Struct &payload)
     {
         Struct envelope;
         put(envelope, "kind", stringValue("event"));
         put(envelope, "event", stringValue(name));
         put(envelope, "payload", structValue(payload));
-        send(envelope);
+        return send(envelope) || abortOutput();
     }
 
-    void response(const std::string &id, bool ok,
+    bool response(const std::string &id, bool ok,
                   const std::string &code = {}, const std::string &message = {})
     {
         Struct envelope;
@@ -303,15 +307,40 @@ private:
             put(error, "message", stringValue(message));
             put(envelope, "error", structValue(error));
         }
-        send(envelope);
+        return send(envelope) || abortOutput();
     }
 
-    void connect(const std::string &id, const Struct &request)
+    bool abortOutput()
+    {
+        const SendFailure failure = sendFailure_;
+        session_.disconnect();
+        // An oversized snapshot is recoverably diagnosable on the same framed
+        // channel. Do not recurse through event(), and never put logs on stdout.
+        if (failure != SendFailure::Io) {
+            Struct payload;
+            put(payload, "code", stringValue(
+                failure == SendFailure::Oversize
+                    ? "outgoing-frame-too-large" : "controller-output"));
+            put(payload, "message", stringValue(
+                failure == SendFailure::Oversize
+                    ? "controller snapshot exceeds the 1 MiB frame limit"
+                    : "controller could not encode its output"));
+            Struct envelope;
+            put(envelope, "kind", stringValue("event"));
+            put(envelope, "event", stringValue("protocolError"));
+            put(envelope, "payload", structValue(payload));
+            send(envelope); // Best effort; failure still terminates the session.
+        }
+        fatalOutput_ = true;
+        stopped = 1;
+        return false;
+    }
+
+    bool connect(const std::string &id, const Struct &request)
     {
         const Value *argsValue = field(request, "args");
         if (!argsValue || argsValue->kind_case() != Value::kStructValue) {
-            response(id, false, "invalid-argument", "connect args must be an object");
-            return;
+            return response(id, false, "invalid-argument", "connect args must be an object");
         }
         const Struct &args = argsValue->struct_value();
         std::string host;
@@ -321,43 +350,40 @@ private:
                 port->kind_case() != Value::kNumberValue ||
                 std::floor(port->number_value()) != port->number_value() ||
                 port->number_value() < 1 || port->number_value() > 65535) {
-            response(id, false, "invalid-argument",
-                     "numeric IPv4/IPv6 host and port 1-65535 required");
-            return;
+            return response(id, false, "invalid-argument",
+                            "numeric IPv4/IPv6 host and port 1-65535 required");
         }
         host_ = host;
         port_ = static_cast<std::uint16_t>(port->number_value());
-        status("connecting");
+        if (!status("connecting"))
+            return false;
         const auto result = session_.connect(host_, port_, "1.4.0-dev", kRpcTimeout);
-        finishConnection(id, result);
+        return finishConnection(id, result);
     }
 
-    void reconnect(const std::string &id)
+    bool reconnect(const std::string &id)
     {
-        status("connecting", "Reconnecting");
-        finishConnection(id, session_.reconnect(kRpcTimeout));
+        if (!status("connecting", "Reconnecting"))
+            return false;
+        return finishConnection(id, session_.reconnect(kRpcTimeout));
     }
 
-    void finishConnection(const std::string &id, const ClientSession::Result &result)
+    bool finishConnection(const std::string &id, const ClientSession::Result &result)
     {
         if (!result) {
-            ports(false);
+            if (!ports(false))
+                return false;
             const std::string message = errorCode(result.error) + ": " + result.message;
-            status("error", message);
-            response(id, false, errorCode(result.error), result.message);
-            return;
+            return status("error", message) &&
+                response(id, false, errorCode(result.error), result.message);
         }
         const auto statsResult = session_.queryStats(kRpcTimeout);
         if (!statsResult) {
             session_.disconnect();
-            ports(false);
-            status("error", statsResult.message);
-            response(id, false, errorCode(statsResult.error), statsResult.message);
-            return;
+            return ports(false) && status("error", statsResult.message) &&
+                response(id, false, errorCode(statsResult.error), statsResult.message);
         }
-        status("connected");
-        ports(true);
-        response(id, true);
+        return status("connected") && ports(true) && response(id, true);
     }
 
     Struct portMetadata(const ostinato::client::PortState &port) const
@@ -395,7 +421,7 @@ private:
         return value;
     }
 
-    void ports(bool includeStats)
+    bool ports(bool includeStats)
     {
         ListValue metadata;
         ListValue statistics;
@@ -408,7 +434,8 @@ private:
         }
         Struct portsPayload;
         put(portsPayload, "ports", listValue(metadata));
-        event("ports", portsPayload);
+        if (!event("ports", portsPayload))
+            return false;
 
         Struct statsPayload;
         put(statsPayload, "sequence", numberValue(++sequence_));
@@ -416,13 +443,15 @@ private:
             std::chrono::system_clock::now().time_since_epoch()).count();
         put(statsPayload, "sampledAt", numberValue(static_cast<double>(now)));
         put(statsPayload, "ports", listValue(statistics));
-        event("stats", statsPayload);
+        return event("stats", statsPayload);
     }
 
     ClientSession session_;
     std::string host_;
     std::uint16_t port_ = 0;
     std::uint64_t sequence_ = 0;
+    SendFailure sendFailure_ = SendFailure::None;
+    bool fatalOutput_ = false;
 };
 
 } // namespace
@@ -446,7 +475,8 @@ int main()
 #endif
 
     Controller controller;
-    controller.status("disconnected", "Controller ready");
+    if (!controller.status("disconnected", "Controller ready"))
+        return 1;
     FrameDecoder decoder;
     auto nextPoll = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(kStatsIntervalMs);
@@ -481,16 +511,16 @@ int main()
                 break;
             }
             for (const auto &frame : frames) {
-                controller.handle(frame);
-                if (stopped)
+                if (!controller.handle(frame) || stopped)
                     break;
             }
         }
         if (std::chrono::steady_clock::now() >= nextPoll) {
-            controller.pollStats();
+            if (!controller.pollStats())
+                break;
             nextPoll = std::chrono::steady_clock::now() +
                        std::chrono::milliseconds(kStatsIntervalMs);
         }
     }
-    return 0;
+    return controller.failed() ? 1 : 0;
 }

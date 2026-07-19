@@ -1,4 +1,6 @@
 #include "stdio_protocol.h"
+#include "pbrpc_server_core.h"
+#include "protocol.pb.h"
 
 #include <poll.h>
 #include <signal.h>
@@ -21,6 +23,8 @@
 using namespace ostinato::controller;
 
 namespace {
+
+constexpr std::uint32_t kPortId = 7;
 
 void require(bool condition, const std::string &message)
 {
@@ -106,7 +110,7 @@ public:
         throw std::runtime_error("timed out waiting for controller frame");
     }
 
-    void expectExit()
+    void expectExit(bool success = true)
     {
         close(input_); input_ = -1;
         for (int attempt = 0; attempt < 100; ++attempt) {
@@ -114,8 +118,11 @@ public:
             const pid_t result = waitpid(pid_, &status, WNOHANG);
             if (result == pid_) {
                 pid_ = -1;
-                require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-                        "controller shutdown status");
+                require(WIFEXITED(status) &&
+                            (success ? WEXITSTATUS(status) == 0
+                                     : WEXITSTATUS(status) != 0),
+                        success ? "controller shutdown status"
+                                : "controller output failure status");
                 return;
             }
             usleep(20000);
@@ -144,6 +151,91 @@ bool contains(const std::string &value, const std::string &part)
 {
     return value.find(part) != std::string::npos;
 }
+
+class OversizeService : public OstProto::OstService {
+public:
+    void checkVersion(google::protobuf::RpcController *,
+                      const OstProto::VersionInfo *,
+                      OstProto::VersionCompatibility *reply,
+                      google::protobuf::Closure *done) override
+    {
+        reply->set_result(OstProto::VersionCompatibility::kCompatible);
+        done->Run();
+    }
+
+    void getPortIdList(google::protobuf::RpcController *, const OstProto::Void *,
+                       OstProto::PortIdList *reply,
+                       google::protobuf::Closure *done) override
+    {
+        reply->add_port_id()->set_id(kPortId);
+        done->Run();
+    }
+
+    void getPortConfig(google::protobuf::RpcController *,
+                       const OstProto::PortIdList *,
+                       OstProto::PortConfigList *reply,
+                       google::protobuf::Closure *done) override
+    {
+        auto *port = reply->add_port();
+        port->mutable_port_id()->set_id(kPortId);
+        port->set_name(std::string(kMaxFrameSize + 256, 'x'));
+        done->Run();
+    }
+
+    void getDeviceGroupIdList(google::protobuf::RpcController *,
+                              const OstProto::PortId *request,
+                              OstProto::DeviceGroupIdList *reply,
+                              google::protobuf::Closure *done) override
+    {
+        reply->mutable_port_id()->CopyFrom(*request);
+        done->Run();
+    }
+
+    void getDeviceGroupConfig(google::protobuf::RpcController *,
+                              const OstProto::DeviceGroupIdList *request,
+                              OstProto::DeviceGroupConfigList *reply,
+                              google::protobuf::Closure *done) override
+    {
+        reply->mutable_port_id()->CopyFrom(request->port_id());
+        done->Run();
+    }
+
+    void getDeviceList(google::protobuf::RpcController *,
+                       const OstProto::PortId *request,
+                       OstProto::PortDeviceList *reply,
+                       google::protobuf::Closure *done) override
+    {
+        reply->mutable_port_id()->CopyFrom(*request);
+        done->Run();
+    }
+
+    void getStreamIdList(google::protobuf::RpcController *,
+                         const OstProto::PortId *request,
+                         OstProto::StreamIdList *reply,
+                         google::protobuf::Closure *done) override
+    {
+        reply->mutable_port_id()->CopyFrom(*request);
+        done->Run();
+    }
+
+    void getStreamConfig(google::protobuf::RpcController *,
+                         const OstProto::StreamIdList *request,
+                         OstProto::StreamConfigList *reply,
+                         google::protobuf::Closure *done) override
+    {
+        reply->mutable_port_id()->CopyFrom(request->port_id());
+        done->Run();
+    }
+
+    void getStats(google::protobuf::RpcController *,
+                  const OstProto::PortIdList *,
+                  OstProto::PortStatsList *reply,
+                  google::protobuf::Closure *done) override
+    {
+        reply->add_port_stats()->mutable_port_id()->set_id(kPortId);
+        done->Run();
+    }
+};
 
 } // namespace
 
@@ -174,6 +266,34 @@ int main()
                     contains(shutdown, "\"ok\":true"),
                 "shutdown response ID");
         child.expectExit();
+
+        OversizeService fake;
+        pbrpc::TcpRpcServer::Options options;
+        options.address = "127.0.0.1";
+        pbrpc::TcpRpcServer server(&fake, options);
+        std::string serverError;
+        require(server.start(&serverError), "start oversized snapshot service: " + serverError);
+
+        Child oversized;
+        require(contains(oversized.readJson(), "\"event\":\"status\""),
+                "oversize controller startup status");
+        oversized.writeJson(
+            "{\"kind\":\"request\",\"id\":\"large-1\","
+            "\"command\":\"connect\",\"args\":{\"host\":\"127.0.0.1\","
+            "\"port\":" + std::to_string(server.port()) + "}}");
+        bool connected = false;
+        bool controlledError = false;
+        for (int frame = 0; frame < 8 && !controlledError; ++frame) {
+            const std::string output = oversized.readJson();
+            connected = connected || contains(output, "\"state\":\"connected\"");
+            controlledError = contains(output, "outgoing-frame-too-large") &&
+                              contains(output, "protocolError");
+        }
+        require(connected, "controller reached connected before oversized snapshot");
+        require(controlledError, "oversized snapshot returned a small controlled error");
+        oversized.expectExit(false);
+        server.stop();
+
         std::cout << "controller process protocol tests passed\n";
         return 0;
     } catch (const std::exception &error) {

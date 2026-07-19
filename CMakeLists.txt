@@ -220,6 +220,8 @@ if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
         target_compile_definitions(controller_process_tests PRIVATE
             OSTINATO_CONTROLLER_PATH="$<TARGET_FILE:ostinato-controller>")
         add_dependencies(controller_process_tests ostinato-controller)
+        target_link_libraries(controller_process_tests PRIVATE
+            pbrpc_server_core ostproto_messages)
         ostinato_target_defaults(controller_process_tests)
         add_test(NAME controller_process COMMAND controller_process_tests)
     endif()
