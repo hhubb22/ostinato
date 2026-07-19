@@ -21,6 +21,7 @@
 #include "vlan.pb.h"
 
 #include <QFile>
+#include <QBuffer>
 #include <QHostAddress>
 #include <QProcess>
 #include <QTcpServer>
@@ -915,6 +916,23 @@ void CompatibilityTests::qtClientToQtFreeDrone()
              qPrintable(stopCaptureController->ErrorString()));
     QCOMPARE(stopCaptureResponse->status(), OstProto::Ack::kRpcSuccess);
 
+    auto *bufferRequest = new OstProto::PortId;
+    bufferRequest->set_id(portId);
+    auto *bufferResponse = new OstProto::CaptureBuffer;
+    auto *bufferController = new PbRpcController(bufferRequest, bufferResponse);
+    QBuffer captureBuffer;
+    QVERIFY(captureBuffer.open(QIODevice::WriteOnly));
+    bufferController->setBinaryBlob(&captureBuffer);
+    bool bufferDone = false;
+    TestClosure bufferClosure(&bufferDone);
+    stub.getCaptureBuffer(bufferController, bufferRequest, bufferResponse,
+                          &bufferClosure);
+    QTRY_VERIFY(bufferDone);
+    QVERIFY2(!bufferController->Failed(),
+             qPrintable(bufferController->ErrorString()));
+    QVERIFY(captureBuffer.data().size() >= 24); // pcap global header
+
+    delete bufferController;
     delete stopCaptureController;
     delete startCaptureController;
     delete devicesController;
