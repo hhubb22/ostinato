@@ -5,21 +5,59 @@
 
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace pbrpc {
 
-void ServerController::Reset() { failed_ = disconnect_ = hasBlob_ = false; notifications_ = true; error_.clear(); blob_.clear(); }
+ServerController::~ServerController() { finishBinaryBlob(); }
+void ServerController::Reset() { finishBinaryBlob(); failed_ = disconnect_ = hasBlob_ = false; notifications_ = true; error_.clear(); blob_.clear(); blobSize_ = 0; blobReader_ = {}; }
 bool ServerController::Failed() const { return failed_; }
 std::string ServerController::ErrorText() const { return error_; }
 void ServerController::StartCancel() {}
 void ServerController::SetFailed(const std::string &reason) { failed_ = true; error_ = reason; }
 bool ServerController::IsCanceled() const { return false; }
 void ServerController::NotifyOnCancel(google::protobuf::Closure *) {}
+void ServerController::setBinaryBlob(std::vector<std::uint8_t> blob)
+{
+    finishBinaryBlob();
+    hasBlob_ = true;
+    blobSize_ = 0;
+    blobReader_ = {};
+    blob_ = std::move(blob);
+}
+void ServerController::setBinaryBlobSource(std::uint64_t size, BlobReader reader,
+                                           std::function<void()> finished)
+{
+    finishBinaryBlob();
+    hasBlob_ = true;
+    blob_.clear();
+    blobSize_ = size;
+    blobReader_ = std::move(reader);
+    blobFinished_ = std::move(finished);
+}
+std::uint64_t ServerController::binaryBlobSize() const
+{
+    return blobReader_ ? blobSize_ : blob_.size();
+}
+bool ServerController::readBinaryBlob(std::uint8_t *data, std::size_t capacity,
+                                      std::size_t &count)
+{
+    if (!blobReader_) return false;
+    try { count = blobReader_(data, capacity); }
+    catch (...) { count = 0; return false; }
+    return count <= capacity;
+}
+void ServerController::finishBinaryBlob()
+{
+    if (blobFinished_) { auto finished = std::move(blobFinished_); finished(); }
+}
 
 namespace {
 class Completion : public google::protobuf::Closure {
@@ -50,9 +88,15 @@ public:
     ~Connection() { stop(); }
     void start() { thread_ = std::thread(&Connection::run, this); }
     void stop() {
-        const int fd = fd_.exchange(-1);
-        if (fd >= 0) { ::shutdown(fd, SHUT_RDWR); ::close(fd); }
+        closeSocket();
         if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) thread_.join();
+    }
+    void closeSocket() {
+        const int fd = fd_.exchange(-1);
+        if (fd < 0) return;
+        ::shutdown(fd, SHUT_RDWR);
+        std::lock_guard<std::mutex> lock(writeMutex_);
+        ::close(fd);
     }
     bool closed() const { return closed_; }
     void notify(std::uint16_t type, const google::protobuf::Message &message) {
@@ -68,9 +112,32 @@ private:
         const int fd = fd_;
         return fd >= 0 && sendAll(fd, frame.data(), frame.size());
     }
+    bool writeBlob(std::uint16_t method, ServerController &controller) {
+        const std::uint64_t size = controller.binaryBlobSize();
+        if (size > parserMaxPayload_ || size > std::numeric_limits<std::uint32_t>::max()) return false;
+        std::lock_guard<std::mutex> lock(writeMutex_);
+        const int fd = fd_;
+        if (fd < 0) return false;
+        const auto header = encodeHeader(MessageType::BinaryBlob, method,
+                                         static_cast<std::uint32_t>(size));
+        if (!sendAll(fd, header.data(), header.size())) return false;
+        if (!controller.binaryBlob().empty())
+            return sendAll(fd, controller.binaryBlob().data(), controller.binaryBlob().size());
+        std::uint8_t chunk[64 * 1024];
+        std::uint64_t remaining = size;
+        while (remaining) {
+            std::size_t count = 0;
+            const std::size_t wanted = static_cast<std::size_t>(
+                std::min<std::uint64_t>(remaining, sizeof(chunk)));
+            if (!controller.readBinaryBlob(chunk, wanted, count) || !count
+                    || count > remaining || !sendAll(fd, chunk, count)) return false;
+            remaining -= count;
+        }
+        return true;
+    }
     void error(std::uint16_t method, const std::string &text, bool disconnect = false) {
         writeFrame(MessageType::Error, method, text);
-        if (disconnect) { const int fd = fd_; if (fd >= 0) ::shutdown(fd, SHUT_RDWR); }
+        if (disconnect) closeSocket();
     }
     bool process(Frame frame) {
         const std::uint16_t id = frame.header.method;
@@ -91,14 +158,14 @@ private:
         { std::unique_lock<std::mutex> lock(completion.mutex); completion.cv.wait(lock, [&completion] { return completion.done; }); }
         if (controller.Failed()) writeFrame(MessageType::Error, id, controller.ErrorText());
         else if (controller.hasBinaryBlob()) {
-            const auto &blob = controller.binaryBlob();
-            const auto wire = encodeFrame(MessageType::BinaryBlob, id, ByteView(blob.data(), blob.size()));
-            std::lock_guard<std::mutex> lock(writeMutex_);
-            const int fd = fd_; if (fd >= 0) sendAll(fd, wire.data(), wire.size());
+            if (controller.binaryBlobSize() > parserMaxPayload_)
+                error(id, "RPC binary blob exceeds configured maximum");
+            else if (!writeBlob(id, controller)) { controller.finishBinaryBlob(); closeSocket(); return false; }
+            controller.finishBinaryBlob();
         } else if (!response->IsInitialized()) error(id, "RPC response missing required fields");
         else { std::string payload; response->SerializeToString(&payload); writeFrame(MessageType::Response, id, payload); }
         if (id == 15 && !controller.Failed()) { compatible_ = true; notifications_ = controller.notificationsEnabled(); }
-        if (controller.disconnect()) { const int fd = fd_; if (fd >= 0) ::shutdown(fd, SHUT_RDWR); return false; }
+        if (controller.disconnect()) { closeSocket(); return false; }
         return true;
     }
     void run() {
@@ -110,12 +177,13 @@ private:
             while (parser_.hasFrame()) if (!process(parser_.popFrame())) goto finished;
         }
 finished:
-        { const int fd = fd_.exchange(-1); if (fd >= 0) { ::shutdown(fd, SHUT_RDWR); ::close(fd); } }
+        closeSocket();
         closed_ = true;
     }
     std::atomic<int> fd_;
     google::protobuf::Service *service_;
     FrameParser parser_;
+    const std::uint32_t parserMaxPayload_ = parser_.maxPayload();
     std::thread thread_;
     std::mutex writeMutex_;
     std::atomic<bool> closed_{false};
@@ -156,6 +224,13 @@ bool TcpRpcServer::start(std::string *error)
 void TcpRpcServer::acceptLoop()
 {
     while (running_) {
+        pollfd event = {listenFd_, POLLIN, 0};
+        const int ready = ::poll(&event, 1, 100);
+        removeClosedConnections();
+        if (!running_) break;
+        if (ready < 0) { if (errno == EINTR) continue; break; }
+        if (ready == 0) continue;
+        if (!(event.revents & POLLIN)) break;
         const int fd = ::accept(listenFd_, nullptr, nullptr);
         if (fd < 0) { if (errno == EINTR) continue; break; }
         auto connection = std::make_shared<Connection>(fd, service_, options_.maxPayload);
@@ -163,6 +238,10 @@ void TcpRpcServer::acceptLoop()
         connection->start();
         removeClosedConnections();
     }
+}
+std::size_t TcpRpcServer::connectionCount() const {
+    std::lock_guard<std::mutex> lock(connectionsMutex_);
+    return connections_.size();
 }
 void TcpRpcServer::removeClosedConnections() {
     std::vector<std::shared_ptr<Connection>> dead;

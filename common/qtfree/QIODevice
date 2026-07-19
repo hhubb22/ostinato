@@ -12,5 +12,6 @@ public:
     virtual bool isOpen()const=0;
     virtual qint64 size()const=0;
     virtual bool seek(qint64 position)=0;
+    virtual qint64 read(char *data, qint64 capacity)=0;
     virtual QByteArray readAll()=0;
 };

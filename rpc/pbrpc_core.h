@@ -59,6 +59,7 @@ public:
     std::size_t frameCount() const { return frames_.size(); }
     Frame popFrame();
     bool failed() const { return failed_; }
+    std::uint32_t maxPayload() const { return maxPayload_; }
     const std::string &error() const { return error_; }
     void reset();
 

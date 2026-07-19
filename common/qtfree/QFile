@@ -19,6 +19,7 @@ public:
     bool isOpen()const override{return open_;}
     qint64 size()const override{std::error_code error;auto n=std::filesystem::file_size(name_.toStdString(),error);return error?0:qint64(n);}
     bool seek(qint64 pos)override{file_.clear();file_.seekg(pos);file_.seekp(pos);return bool(file_);}
+    qint64 read(char*data,qint64 capacity)override{if(capacity<=0)return 0;file_.read(data,capacity);return qint64(file_.gcount());}
     QByteArray readAll()override{file_.clear();file_.seekg(0);std::string data((std::istreambuf_iterator<char>(file_)),{});return QByteArray(data.data(),int(data.size()));}
     QString fileName()const{return name_;}
 };

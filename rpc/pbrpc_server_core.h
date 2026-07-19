@@ -9,6 +9,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -19,6 +20,9 @@ namespace pbrpc {
 
 class ServerController : public google::protobuf::RpcController {
 public:
+    using BlobReader = std::function<std::size_t(std::uint8_t *, std::size_t)>;
+
+    ~ServerController() override;
     void Reset() override;
     bool Failed() const override;
     std::string ErrorText() const override;
@@ -31,9 +35,15 @@ public:
     bool disconnect() const { return disconnect_; }
     void enableNotifications(bool enabled) { notifications_ = enabled; }
     bool notificationsEnabled() const { return notifications_; }
-    void setBinaryBlob(std::vector<std::uint8_t> blob) { hasBlob_ = true; blob_ = std::move(blob); }
+    void setBinaryBlob(std::vector<std::uint8_t> blob);
+    void setBinaryBlobSource(std::uint64_t size, BlobReader reader,
+                             std::function<void()> finished = {});
     bool hasBinaryBlob() const { return hasBlob_; }
     const std::vector<std::uint8_t> &binaryBlob() const { return blob_; }
+    std::uint64_t binaryBlobSize() const;
+    bool readBinaryBlob(std::uint8_t *data, std::size_t capacity,
+                        std::size_t &count);
+    void finishBinaryBlob();
 
 private:
     bool failed_ = false;
@@ -42,6 +52,9 @@ private:
     bool hasBlob_ = false;
     std::string error_;
     std::vector<std::uint8_t> blob_;
+    std::uint64_t blobSize_ = 0;
+    BlobReader blobReader_;
+    std::function<void()> blobFinished_;
 };
 
 class TcpRpcServer {
@@ -62,6 +75,7 @@ public:
     void stop();
     std::uint16_t port() const { return boundPort_; }
     bool running() const { return running_; }
+    std::size_t connectionCount() const;
 
     // Sent only to connections which completed method 15 compatibility and
     // whose method-15 controller left notifications enabled.
@@ -79,7 +93,7 @@ private:
     std::uint16_t boundPort_ = 0;
     std::atomic<bool> running_{false};
     std::thread acceptThread_;
-    std::mutex connectionsMutex_;
+    mutable std::mutex connectionsMutex_;
     std::vector<std::shared_ptr<Connection>> connections_;
 };
 

@@ -617,16 +617,32 @@ void MyService::getCaptureBuffer(::google::protobuf::RpcController* controller,
 #ifdef OSTINATO_QT_FREE
     {
         QIODevice *capture = portInfo[portId]->captureData();
-        capture->seek(0);
-        const QByteArray bytes = capture->readAll();
-        static_cast<pbrpc::ServerController*>(controller)->setBinaryBlob(
-            std::vector<std::uint8_t>(bytes.data(), bytes.data() + bytes.size()));
+        const qint64 size = capture->size();
+        if (size < 0 || !capture->seek(0)) {
+            portLock[portId]->unlock();
+            controller->SetFailed("capture buffer is not readable");
+            done->Run();
+            return;
+        }
+        // Keep the port lock until the transport has consumed the capture.
+        // This gives the stream a stable lifetime without reopening the
+        // temporary file by pathname.
+        static_cast<pbrpc::ServerController*>(controller)->setBinaryBlobSource(
+            static_cast<std::uint64_t>(size),
+            [capture](std::uint8_t *data, std::size_t capacity) {
+                const qint64 count = capture->read(reinterpret_cast<char *>(data),
+                                                   static_cast<qint64>(capacity));
+                return count > 0 ? static_cast<std::size_t>(count) : 0;
+            },
+            [lock = portLock[portId]] { lock->unlock(); });
     }
 #else
     static_cast<PbRpcController*>(controller)->setBinaryBlob(
         portInfo[portId]->captureData());
 #endif
+#ifndef OSTINATO_QT_FREE
     portLock[portId]->unlock();
+#endif
 
     done->Run();
     return;
