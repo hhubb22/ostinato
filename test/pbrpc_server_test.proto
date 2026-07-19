@@ -13,4 +13,5 @@ service TestService {
   rpc m14(Data) returns (Data); rpc checkVersion(Data) returns (Data);
   rpc echo(Data) returns (Data); rpc fail(Data) returns (Data);
   rpc blob(Data) returns (Data); rpc disconnect(Data) returns (Data);
+  rpc slow(Data) returns (Data);
 }

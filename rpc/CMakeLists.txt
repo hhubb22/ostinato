@@ -3,6 +3,11 @@ target_include_directories(pbrpc_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 ostinato_target_defaults(pbrpc_core)
 
 if(UNIX)
+    add_library(pbrpc_client_core STATIC pbrpc_client_core.cpp pbrpc_client_core.h)
+    target_include_directories(pbrpc_client_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(pbrpc_client_core PUBLIC pbrpc_core protobuf::libprotobuf pthread)
+    ostinato_target_defaults(pbrpc_client_core)
+
     add_library(pbrpc_server_core STATIC pbrpc_server_core.cpp pbrpc_server_core.h)
     target_include_directories(pbrpc_server_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(pbrpc_server_core PUBLIC pbrpc_core protobuf::libprotobuf)
