@@ -5,6 +5,7 @@ if(BUILD_TESTING)
     target_link_libraries(ostinato_compatibility_tests PRIVATE
         ostfile ostproto pbrpc Qt5::Test)
     ostinato_target_defaults(ostinato_compatibility_tests)
+    ostinato_qt_target(ostinato_compatibility_tests)
 
     add_test(NAME compatibility COMMAND ostinato_compatibility_tests)
 endif()
@@ -22,3 +23,4 @@ else()
     target_link_libraries(ostinato_importpcap PRIVATE "${TEST_PCAP_LIBRARY}")
 endif()
 ostinato_target_defaults(ostinato_importpcap)
+ostinato_qt_target(ostinato_importpcap)

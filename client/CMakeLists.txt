@@ -51,6 +51,7 @@ endif()
 
 ostinato_add_version_source(ostinato)
 ostinato_target_defaults(ostinato)
+ostinato_qt_target(ostinato)
 
 set(theme_files
     themes/material-dark.qss themes/material-dark.rcc

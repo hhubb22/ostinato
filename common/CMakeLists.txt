@@ -53,6 +53,7 @@ target_include_directories(ostproto PUBLIC
 target_link_libraries(ostproto PUBLIC
     Qt5::Core Qt5::Network Qt5::Xml QuickJS::QuickJS protobuf::libprotobuf)
 ostinato_target_defaults(ostproto)
+ostinato_qt_target(ostproto)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ostproto PRIVATE -Wno-cast-function-type)
 endif()
@@ -71,11 +72,14 @@ target_include_directories(ostfile PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(ostfile PUBLIC ostproto Qt5::Network Qt5::Xml protobuf::libprotobuf)
 ostinato_target_defaults(ostfile)
+ostinato_qt_target(ostfile)
 
+if(OSTINATO_BUILD_CLIENT)
 add_library(ostfilegui STATIC
     fileformatoptions.cpp pcapoptionsdialog.cpp pcapfileimport.ui fileformatoptions.h)
 target_include_directories(ostfilegui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ostfilegui PUBLIC ostfile Qt5::Widgets)
+ostinato_qt_target(ostfilegui)
 
 add_library(ostprotogui STATIC
     spinboxdelegate.cpp tosdscp.cpp protocolwidgetfactory.cpp macconfig.cpp
@@ -97,3 +101,5 @@ target_include_directories(ostprotogui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ostprotogui PUBLIC
     ostproto qhexedit2 Qt5::Network Qt5::Widgets Qt5::Xml)
 ostinato_target_defaults(ostprotogui)
+ostinato_qt_target(ostprotogui)
+endif()

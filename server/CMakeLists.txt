@@ -65,6 +65,7 @@ endif()
 
 ostinato_add_version_source(drone)
 ostinato_target_defaults(drone)
+ostinato_qt_target(drone)
 if(APPLE)
     set_target_properties(drone PROPERTIES MACOSX_BUNDLE TRUE)
     install(TARGETS drone BUNDLE DESTINATION Ostinato)

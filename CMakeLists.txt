@@ -4,18 +4,16 @@ project(Ostinato VERSION 1.4.0 LANGUAGES C CXX)
 
 include(CTest)
 
+option(OSTINATO_BUILD_CLIENT "Build the Ostinato GUI client" ON)
+option(OSTINATO_BUILD_DRONE "Build the Ostinato drone agent" ON)
+option(OSTINATO_BUILD_QT_TESTS "Build the Qt-based tests and test tools" ON)
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTORCC ON)
 
 if(MSVC)
     add_link_options(/STACK:8388608)
-    # Qt maps this to MSVC's __FUNCSIG__, providing the same diagnostic
-    # function-name value used by the existing GCC/Clang logging calls.
-    add_compile_definitions(__PRETTY_FUNCTION__=Q_FUNC_INFO)
 endif()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -27,10 +25,42 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     endif()
 endif()
 
-find_package(Qt5 5.7 REQUIRED COMPONENTS
-    Core Gui Network Svg Test Widgets Xml)
-find_package(Protobuf REQUIRED)
+# This is intentionally diagnosed before find_package(Qt5): it is the future
+# no-Qt configuration exercised by CI, but the current drone dependency chain
+# (ostproto and pbrpc included) still contains real Qt APIs.  Do not silently
+# make configuration pass only to leave an unbuildable drone target.
+if(OSTINATO_BUILD_DRONE AND NOT OSTINATO_BUILD_CLIENT
+        AND NOT OSTINATO_BUILD_QT_TESTS)
+    message(FATAL_ERROR
+        "A drone-only no-Qt build is not available yet: drone, ostproto, and "
+        "pbrpc still depend on Qt. This check intentionally runs before "
+        "find_package(Qt5). Keep a Qt-using target enabled for the transitional "
+        "build, or finish the core dependency migration first.")
+endif()
 
+set(_ostinato_build_qt_tests OFF)
+if(BUILD_TESTING AND OSTINATO_BUILD_QT_TESTS)
+    set(_ostinato_build_qt_tests ON)
+endif()
+set(_ostinato_build_any_target OFF)
+if(OSTINATO_BUILD_CLIENT OR OSTINATO_BUILD_DRONE OR _ostinato_build_qt_tests)
+    set(_ostinato_build_any_target ON)
+endif()
+
+if(_ostinato_build_any_target)
+    set(_ostinato_qt_components Core Network Xml)
+    if(OSTINATO_BUILD_CLIENT)
+        list(APPEND _ostinato_qt_components Gui Svg Widgets)
+    endif()
+    if(OSTINATO_BUILD_CLIENT OR _ostinato_build_qt_tests)
+        list(APPEND _ostinato_qt_components Test)
+    endif()
+    list(REMOVE_DUPLICATES _ostinato_qt_components)
+    find_package(Qt5 5.7 REQUIRED COMPONENTS ${_ostinato_qt_components})
+    find_package(Protobuf REQUIRED)
+endif()
+
+if(_ostinato_build_any_target)
 include(FetchContent)
 set(QJS_BUILD_LIBC OFF CACHE BOOL "" FORCE)
 set(QJS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -61,12 +91,24 @@ set_target_properties(
     PROPERTIES
     EXCLUDE_FROM_ALL TRUE EXCLUDE_FROM_DEFAULT_BUILD TRUE)
 add_library(QuickJS::QuickJS ALIAS qjs)
+endif()
 
 function(ostinato_target_defaults target)
     target_compile_features(${target} PUBLIC cxx_std_11)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE
             $<$<CONFIG:Debug>:-Wall;-W;-Wextra;-Werror;-Wno-deprecated-declarations>)
+    endif()
+endfunction()
+
+function(ostinato_qt_target target)
+    set_target_properties(${target} PROPERTIES
+        AUTOMOC ON
+        AUTOUIC ON
+        AUTORCC ON)
+    if(MSVC)
+        # Qt maps this to MSVC's __FUNCSIG__, matching GCC/Clang diagnostics.
+        target_compile_definitions(${target} PRIVATE __PRETTY_FUNCTION__=Q_FUNC_INFO)
     endif()
 endfunction()
 
@@ -89,9 +131,22 @@ function(ostinato_add_version_source target)
     target_sources(${target} PRIVATE "${version_source}")
 endfunction()
 
-add_subdirectory(extra)
-add_subdirectory(common)
-add_subdirectory(rpc)
-add_subdirectory(server)
-add_subdirectory(client)
-add_subdirectory(test)
+if(_ostinato_build_any_target)
+    if(OSTINATO_BUILD_CLIENT)
+        add_subdirectory(extra)
+    endif()
+    # common and rpc currently host Qt-dependent shared targets. Keeping these
+    # boundaries explicit allows future Qt-free core targets to be introduced
+    # without pulling in the GUI directories.
+    add_subdirectory(common)
+    add_subdirectory(rpc)
+endif()
+if(OSTINATO_BUILD_DRONE)
+    add_subdirectory(server)
+endif()
+if(OSTINATO_BUILD_CLIENT)
+    add_subdirectory(client)
+endif()
+if(_ostinato_build_qt_tests)
+    add_subdirectory(test)
+endif()
