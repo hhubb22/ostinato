@@ -42,6 +42,12 @@ endfunction()
 if(_ostinato_build_any_target OR _ostinato_qtfree_drone
         OR (BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS))
     ostinato_generate_protos(ostproto_pb_sources ostproto_pb_headers ${OSTPROTO_PROTOS})
+    add_custom_target(ostproto_generated_headers DEPENDS ${ostproto_pb_headers})
+    add_library(ostproto_messages STATIC ${ostproto_pb_sources} ${ostproto_pb_headers})
+    add_dependencies(ostproto_messages ostproto_generated_headers)
+    target_include_directories(ostproto_messages PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+    target_link_libraries(ostproto_messages PUBLIC protobuf::libprotobuf)
+    ostinato_target_defaults(ostproto_messages)
 endif()
 
 set(OSTPROTO_CORE_SOURCES
@@ -54,12 +60,12 @@ set(OSTPROTO_CORE_SOURCES
 if(_ostinato_qtfree_drone OR (BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS))
 list(REMOVE_ITEM OSTPROTO_CORE_SOURCES updater.cpp)
 add_library(ostproto_core STATIC
-    ${OSTPROTO_CORE_SOURCES} userscript.h ${ostproto_pb_sources} ${ostproto_pb_headers})
+    ${OSTPROTO_CORE_SOURCES} userscript.h)
 set_property(TARGET ostproto_core PROPERTY CXX_STANDARD 17)
 target_include_directories(ostproto_core BEFORE PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/qtfree"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(ostproto_core PUBLIC QuickJS::QuickJS protobuf::libprotobuf)
+target_link_libraries(ostproto_core PUBLIC QuickJS::QuickJS ostproto_messages)
 ostinato_target_defaults(ostproto_core)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ostproto_core PRIVATE -Wno-cast-function-type)
@@ -68,12 +74,11 @@ endif()
 
 if(_ostinato_build_any_target)
 add_library(ostproto STATIC
-    ${OSTPROTO_CORE_SOURCES} updater.cpp updater.h userscript.h
-    ${ostproto_pb_sources} ${ostproto_pb_headers})
+    ${OSTPROTO_CORE_SOURCES} updater.cpp updater.h userscript.h)
 target_include_directories(ostproto PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(ostproto PUBLIC
-    Qt5::Core Qt5::Network Qt5::Xml QuickJS::QuickJS protobuf::libprotobuf)
+    Qt5::Core Qt5::Network Qt5::Xml QuickJS::QuickJS ostproto_messages)
 ostinato_target_defaults(ostproto)
 ostinato_qt_target(ostproto)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

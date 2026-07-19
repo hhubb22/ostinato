@@ -130,6 +130,19 @@ endfunction()
 
 add_subdirectory(common)
 add_subdirectory(rpc)
+if(UNIX AND TARGET ostproto_generated_headers)
+    add_library(ostinato_client_core STATIC
+        client/core/port_state.cpp client/core/port_state.h
+        client/core/client_session.cpp client/core/client_session.h)
+    add_dependencies(ostinato_client_core ostproto_generated_headers)
+    target_include_directories(ostinato_client_core PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/client/core"
+        "${CMAKE_CURRENT_SOURCE_DIR}/rpc"
+        "${CMAKE_CURRENT_BINARY_DIR}/common")
+    target_link_libraries(ostinato_client_core PUBLIC
+        pbrpc_client_core ostproto_messages)
+    ostinato_target_defaults(ostinato_client_core)
+endif()
 if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
     add_executable(ostproto_core_tests test/ostproto_core_tests.cpp)
     set_property(TARGET ostproto_core_tests PROPERTY CXX_STANDARD 17)
@@ -157,6 +170,14 @@ if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
                 pbrpc_client_core pbrpc_server_core)
             ostinato_target_defaults(pbrpc_client_core_tests)
             add_test(NAME pbrpc_client_core COMMAND pbrpc_client_core_tests)
+            if(TARGET ostinato_client_core)
+                add_executable(headless_client_e2e_tests
+                    test/headless_client_e2e_tests.cpp)
+                target_link_libraries(headless_client_e2e_tests PRIVATE
+                    ostinato_client_core pbrpc_server_core)
+                ostinato_target_defaults(headless_client_e2e_tests)
+                add_test(NAME headless_client_e2e COMMAND headless_client_e2e_tests)
+            endif()
         endif()
     endif()
 endif()
