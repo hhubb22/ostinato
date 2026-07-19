@@ -142,5 +142,11 @@ inline QDebug qDebug(){return QDebug(std::cerr);}inline QDebug qWarning(){return
 template<class...A>inline void qDebug(const char*f,A...a){std::fprintf(stderr,f,a...);std::fputc('\n',stderr);}template<class...A>inline void qWarning(const char*f,A...a){std::fprintf(stderr,f,a...);std::fputc('\n',stderr);}template<class...A>[[noreturn]]inline void qFatal(const char*f,A...a){std::fprintf(stderr,f,a...);std::fputc('\n',stderr);std::abort();}inline int qrand(){return std::rand();}
 template<class T> inline T qMin(T a,T b){return std::min(a,b);} template<class T>inline T qMax(T a,T b){return std::max(a,b);}
 inline void qsrand(uint seed){std::srand(seed);}
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 template<class T>inline T qToBigEndian(T v){if constexpr(sizeof(T)==1)return v;else if constexpr(sizeof(T)==2)return T(__builtin_bswap16(uint16_t(v)));else if constexpr(sizeof(T)==4)return T(__builtin_bswap32(uint32_t(v)));else if constexpr(sizeof(T)==8)return T(__builtin_bswap64(uint64_t(v)));else return v;}
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+template<class T>inline T qToBigEndian(T v){return v;}
+#else
+#error "Qt-free Ostinato requires a compiler with known host byte order"
+#endif
 template<class T>inline T qFromBigEndian(T v){return qToBigEndian(v);}template<class T>inline T qFromBigEndian(const void*src){T v;std::memcpy(&v,src,sizeof v);return qFromBigEndian(v);}template<class T>inline void qToBigEndian(T v,void*out){T n=qToBigEndian(v);std::memcpy(out,&n,sizeof n);}

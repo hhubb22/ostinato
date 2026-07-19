@@ -142,6 +142,23 @@ void packets()
     checkPacket(false, false, true, "00112233445566778899aabb86dd600000000018114020010db800000000000000000000000120010db800000000000000000000000230390035001863c301020304010203040102030401020304");
 }
 
+void endianBytes()
+{
+    uchar bytes[8] = {};
+    qToBigEndian(quint16(0x1234), bytes);
+    require(hex(bytes, 2) == "1234", "16-bit big-endian bytes");
+    qToBigEndian(quint32(0x01020304), bytes);
+    require(hex(bytes, 4) == "01020304", "32-bit big-endian bytes");
+    qToBigEndian(quint64(0x0102030405060708ULL), bytes);
+    require(hex(bytes, 8) == "0102030405060708", "64-bit big-endian bytes");
+    require(qFromBigEndian<quint16>(bytes + 6) == 0x0708,
+            "16-bit big-endian decode");
+    require(qFromBigEndian<quint32>(bytes + 2) == 0x03040506,
+            "32-bit big-endian decode");
+    require(qFromBigEndian<quint64>(bytes) == 0x0102030405060708ULL,
+            "64-bit big-endian decode");
+}
+
 void variablesReplaceAndRoundTrip()
 {
     OstProto::Stream config = packetConfig(false, false, false);
@@ -210,6 +227,7 @@ int main()
     ProtocolManager manager;
     OstProtocolManager = &manager;
     const std::pair<const char *, std::function<void()> > tests[] = {
+        {"endian byte layout", endianBytes},
         {"golden packets", packets},
         {"variables, replacement, protobuf round-trip", variablesReplaceAndRoundTrip},
         {"QuickJS", quickJs},
@@ -222,6 +240,6 @@ int main()
         }
     }
     OstProtocolManager = nullptr;
-    std::cout << (3 - failed) << "/3 tests passed\n";
+    std::cout << (4 - failed) << "/4 tests passed\n";
     return failed ? 1 : 0;
 }
