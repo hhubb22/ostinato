@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+  echo "GitHub CLI is not authenticated"
+  exit 1
+fi
+
+gh auth setup-git --hostname github.com
