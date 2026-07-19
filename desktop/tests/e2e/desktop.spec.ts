@@ -136,6 +136,20 @@ test('real drone vertical slice, security, virtualization, and controller reap',
     console.log(JSON.stringify({ launchMs: Math.round(launchMs), initialDomRows, updateMs, controllerPid }))
     await electronApp.close()
     await waitForReap(controllerPid)
+
+    const crashApp = await electron.launch({
+      args: [desktopRoot],
+      cwd: desktopRoot,
+      env: { ...process.env, OSTINATO_CONTROLLER_PATH: controller },
+    })
+    const crashPage = await crashApp.firstWindow()
+    await crashPage.waitForURL(/dist-renderer\/index\.html/)
+    const crashedPid = Number(await crashPage.getByTestId('controller-pid').textContent())
+    process.kill(crashedPid, 'SIGKILL')
+    await expect(crashPage.getByTestId('connection-status')).toContainText('error')
+    await expect(crashPage.getByTestId('connection-message')).toContainText('controller exited')
+    await waitForReap(crashedPid)
+    await crashApp.close()
   } catch (error) {
     throw new Error(`${String(error)}\nDrone output:\n${droneLogs}`)
   } finally {

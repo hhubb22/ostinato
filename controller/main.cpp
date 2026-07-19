@@ -434,7 +434,10 @@ int main()
     signal(SIGTERM, stopSignal);
 #ifdef __linux__
     const pid_t parent = getppid();
-    if (prctl(PR_SET_PDEATHSIG, SIGTERM) != 0) {
+    // Graceful Electron shutdown uses the framed shutdown command. If the main
+    // process itself disappears, SIGKILL guarantees a bounded RPC cannot leave
+    // a temporarily orphaned controller behind.
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0) {
         std::cerr << "controller: could not install parent-death signal: "
                   << std::strerror(errno) << '\n';
     } else if (getppid() != parent) {

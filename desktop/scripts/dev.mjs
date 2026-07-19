@@ -8,12 +8,14 @@ const run = (command, args, env = process.env) => {
   return child
 }
 
-const vite = run('npm', ['exec', 'vite', '--', '--host', '127.0.0.1', '--port', '5173'])
+run('npm', ['exec', 'vite', '--', '--host', '127.0.0.1', '--port', '5173'])
 for (let attempt = 0; attempt < 100; attempt += 1) {
   try {
     const response = await fetch('http://127.0.0.1:5173/')
     if (response.ok) break
-  } catch {}
+  } catch {
+    // Vite has not started listening yet.
+  }
   await new Promise((resolve) => setTimeout(resolve, 100))
   if (attempt === 99) throw new Error('Vite did not become ready')
 }

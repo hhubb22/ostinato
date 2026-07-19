@@ -9,7 +9,7 @@
     "controller:build": "cmake -S .. -B ../build-desktop -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DOSTINATO_BUILD_CLIENT=OFF -DOSTINATO_BUILD_QT_TESTS=OFF && cmake --build ../build-desktop --target ostinato-controller drone --parallel",
     "dev": "npm run controller:build && node scripts/dev.mjs",
     "typecheck": "svelte-check --config ./svelte.config.js --tsconfig ./tsconfig.json && tsc -p tsconfig.electron.json --noEmit",
-    "lint": "eslint electron shared src tests vite.config.ts playwright.config.ts",
+    "lint": "eslint electron shared src tests scripts vite.config.ts playwright.config.ts svelte.config.js",
     "test:unit": "vitest run tests/*.test.ts",
     "test:e2e:direct": "playwright test",
     "test:e2e": "npm run controller:build && xvfb-run -a npm run test:e2e:direct",
@@ -17,7 +17,8 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json && node scripts/write-cjs-package.mjs",
     "build": "npm run typecheck && npm run build:renderer && npm run build:electron",
-    "package:linux": "npm run controller:build && npm run build && electron-builder --linux dir"
+    "package:linux": "npm run controller:build && npm run build && electron-builder --linux dir",
+    "measure:linux": "xvfb-run -a node scripts/measure-linux.mjs"
   },
   "dependencies": {
     "svelte": "5.56.6"
@@ -37,6 +38,9 @@
     "typescript-eslint": "8.64.0",
     "vite": "6.4.3",
     "vitest": "3.2.7"
+  },
+  "overrides": {
+    "@noble/hashes": "1.8.0"
   },
   "build": {
     "appId": "org.ostinato.desktop.slice",
