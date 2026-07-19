@@ -152,6 +152,18 @@ if(UNIX AND TARGET ostinato_client_domain AND TARGET pbrpc_client_core)
         ostinato_client_domain pbrpc_client_core)
     ostinato_target_defaults(ostinato_client_core)
 endif()
+if(UNIX AND TARGET ostinato_client_core)
+    add_executable(ostinato-controller
+        controller/main.cpp
+        controller/stdio_protocol.cpp controller/stdio_protocol.h)
+    set_property(TARGET ostinato-controller PROPERTY CXX_STANDARD 17)
+    target_include_directories(ostinato-controller PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/controller")
+    target_link_libraries(ostinato-controller PRIVATE
+        ostinato_client_core protobuf::libprotobuf)
+    ostinato_target_defaults(ostinato-controller)
+    install(TARGETS ostinato-controller RUNTIME DESTINATION bin)
+endif()
 if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
     add_executable(ostproto_core_tests test/ostproto_core_tests.cpp)
     set_property(TARGET ostproto_core_tests PROPERTY CXX_STANDARD 17)
@@ -190,6 +202,26 @@ if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)
                 add_test(NAME headless_client_e2e COMMAND headless_client_e2e_tests)
             endif()
         endif()
+    endif()
+    if(TARGET ostinato-controller)
+        add_executable(controller_protocol_tests
+            test/controller_protocol_tests.cpp controller/stdio_protocol.cpp)
+        set_property(TARGET controller_protocol_tests PROPERTY CXX_STANDARD 17)
+        target_include_directories(controller_protocol_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/controller")
+        ostinato_target_defaults(controller_protocol_tests)
+        add_test(NAME controller_protocol COMMAND controller_protocol_tests)
+
+        add_executable(controller_process_tests
+            test/controller_process_tests.cpp controller/stdio_protocol.cpp)
+        set_property(TARGET controller_process_tests PROPERTY CXX_STANDARD 17)
+        target_include_directories(controller_process_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/controller")
+        target_compile_definitions(controller_process_tests PRIVATE
+            OSTINATO_CONTROLLER_PATH="$<TARGET_FILE:ostinato-controller>")
+        add_dependencies(controller_process_tests ostinato-controller)
+        ostinato_target_defaults(controller_process_tests)
+        add_test(NAME controller_process COMMAND controller_process_tests)
     endif()
 endif()
 if(_ostinato_build_any_target)
