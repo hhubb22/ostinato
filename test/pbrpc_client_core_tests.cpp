@@ -272,6 +272,42 @@ static void testCancelQueuedConnect(Service &service, std::uint16_t port)
     CHECK(!client->connected());
 }
 
+static void testCancelThenDestructorPreservesQueuedConnect(
+    Service &service, std::uint16_t port)
+{
+    auto client = connectedClient(port);
+    TcpRpcClient *raw = client.get();
+    TcpRpcClient::Result slowResult, connectResult;
+    std::thread slow([&] {
+        slowResult = invoke(*raw, 20, "hold call lock for cancel then destroy", seconds(10));
+    });
+    service.waitForSlow();
+    Gate admittedGate;
+    setClientConnectTestHook([&](ClientConnectTestPhase phase) {
+        if (phase == ClientConnectTestPhase::ConnectAdmitted)
+            admittedGate.enterAndWait();
+    });
+    std::thread connector([&] {
+        connectResult = raw->connect("127.0.0.1", port, seconds(2));
+    });
+    admittedGate.waitUntilEntered();
+    raw->cancel();
+    Gate destructorGate;
+    setClientDestructorTestHook([&] { destructorGate.enterAndWait(); });
+    std::thread destroyer([&] { client.reset(); });
+    destructorGate.waitUntilEntered();
+    destructorGate.release();
+    admittedGate.release();
+    slow.join();
+    connector.join();
+    destroyer.join();
+    setClientConnectTestHook({});
+    setClientDestructorTestHook({});
+    service.releaseSlow();
+    CHECK(slowResult.error == TcpRpcClient::Error::Canceled);
+    CHECK(connectResult.error == TcpRpcClient::Error::Canceled);
+}
+
 static void testOldSinkCannotDisconnectNewGeneration(std::uint16_t port)
 {
     auto client = connectedClient(port);
@@ -331,6 +367,7 @@ int main()
     testDestructorWaitsForBlobSink(server.port());
     testDestructorRejectsQueuedConnect(service, server.port());
     testCancelQueuedConnect(service, server.port());
+    testCancelThenDestructorPreservesQueuedConnect(service, server.port());
     testOldSinkCannotDisconnectNewGeneration(server.port());
 
     TcpRpcClient client;

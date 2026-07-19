@@ -273,7 +273,7 @@ TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_
     {
         std::lock_guard<std::mutex> invocationLock(invocationMutex_);
         if (shuttingDown_)
-            return {Error::Disconnected, "RPC client is shutting down"};
+            return connectInterrupted(attempt);
         std::lock_guard<std::mutex> stateLock(stateMutex_);
         if (attempt->interrupted.load())
             return connectInterrupted(attempt);
