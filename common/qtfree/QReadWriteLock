@@ -1,0 +1,5 @@
+#pragma once
+#include "QtCoreCompat.h"
+class QReadWriteLock { std::recursive_mutex m_; public: enum RecursionMode{NonRecursive,Recursive}; explicit QReadWriteLock(RecursionMode=NonRecursive){} void lockForRead(){m_.lock();} void lockForWrite(){m_.lock();} void unlock(){m_.unlock();} };
+class QReadLocker {QReadWriteLock*l_;public:explicit QReadLocker(QReadWriteLock*l):l_(l){l_->lockForRead();}~QReadLocker(){l_->unlock();}};
+class QWriteLocker {QReadWriteLock*l_;public:explicit QWriteLocker(QReadWriteLock*l):l_(l){l_->lockForWrite();}~QWriteLocker(){l_->unlock();}};

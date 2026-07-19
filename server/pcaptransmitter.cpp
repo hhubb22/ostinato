@@ -29,7 +29,11 @@ PcapTransmitter::PcapTransmitter(
     txStats_.setTxThreadStats(&stats_);
 
     txThread_.setStats(&stats_);
+#ifdef OSTINATO_QT_FREE
+    txThread_.setFinishedCallback([this] { updateTxThreadStreamStats(); });
+#else
     connect(&txThread_, SIGNAL(finished()), SLOT(updateTxThreadStreamStats()));
+#endif
 }
 
 PcapTransmitter::~PcapTransmitter()
@@ -157,7 +161,12 @@ double PcapTransmitter::lastTxDuration()
 void PcapTransmitter::updateTxThreadStreamStats()
 {
     QMutexLocker lock(&streamStatsLock_);
-    PcapTxThread *txThread = dynamic_cast<PcapTxThread*>(sender());
+    PcapTxThread *txThread =
+#ifdef OSTINATO_QT_FREE
+        &txThread_;
+#else
+        dynamic_cast<PcapTxThread*>(sender());
+#endif
     StreamStats threadStreamStats = txThread->streamStats();
     StreamStatsIterator i(threadStreamStats);
 

@@ -156,7 +156,7 @@ void EmulDevice::getNeighbors(OstEmul::DeviceNeighborList *neighbors)
     macList = arpTable_.values();
     Q_ASSERT(ip4List.size() == macList.size());
 
-    for (int i = 0; i < ip4List.size(); i++) {
+    for (int i = 0; i < int(ip4List.size()); i++) {
         OstEmul::ArpEntry *arp = neighbors->add_arp();
         arp->set_ip4(ip4List.at(i));
         arp->set_mac(macList.at(i));
@@ -165,7 +165,7 @@ void EmulDevice::getNeighbors(OstEmul::DeviceNeighborList *neighbors)
     macList = ndpTable_.values();
     Q_ASSERT(ip6List.size() == macList.size());
 
-    for (int i = 0; i < ip6List.size(); i++) {
+    for (int i = 0; i < int(ip6List.size()); i++) {
         OstEmul::NdpEntry *ndp = neighbors->add_ndp();
         ndp->mutable_ip6()->set_hi(ip6List.at(i).hi64());
         ndp->mutable_ip6()->set_lo(ip6List.at(i).lo64());

@@ -1,0 +1,29 @@
+#pragma once
+#include "QtCoreCompat.h"
+#include <condition_variable>
+
+class QTimer:public QObject {
+    std::mutex mutex_; std::condition_variable changed_; std::thread worker_;
+    std::function<void()> callback_; int interval_=0; bool running_=false;
+public:
+    explicit QTimer(QObject*p=nullptr):QObject(p){}
+    ~QTimer(){stop();}
+    void setInterval(int interval){std::lock_guard<std::mutex> lock(mutex_);interval_=interval;changed_.notify_all();}
+    void setCallback(std::function<void()> callback){std::lock_guard<std::mutex> lock(mutex_);callback_=std::move(callback);}
+    void start(){
+        stop();
+        {std::lock_guard<std::mutex> lock(mutex_);running_=true;}
+        worker_=std::thread([this]{
+            std::unique_lock<std::mutex> lock(mutex_);
+            while(running_){
+                const int interval=interval_;
+                if(changed_.wait_for(lock,std::chrono::milliseconds(interval),[this,interval]{return !running_||interval_!=interval;}))continue;
+                auto callback=callback_;lock.unlock();if(callback)callback();lock.lock();
+            }
+        });
+    }
+    void stop(){
+        {std::lock_guard<std::mutex> lock(mutex_);running_=false;changed_.notify_all();}
+        if(worker_.joinable())worker_.join();
+    }
+};

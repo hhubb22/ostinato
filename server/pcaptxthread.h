@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include <QMutex>
 #include <QThread>
 #include <pcap.h>
+#include <atomic>
 
 class PcapTxThread: public QThread
 {
@@ -87,8 +88,8 @@ private:
 
     bool usingInternalHandle_;
     pcap_t *handle_;
-    volatile bool stop_;
-    volatile State state_;
+    std::atomic<bool> stop_;
+    std::atomic<State> state_;
 
     bool trackStreamStats_;
     StatsTuple *stats_;
@@ -109,4 +110,3 @@ private:
 };
 
 #endif
-

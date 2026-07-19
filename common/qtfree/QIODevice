@@ -1,0 +1,16 @@
+#pragma once
+#include "QtCoreCompat.h"
+#include <fstream>
+
+class QIODevice {
+public:
+    enum OpenModeFlag { NotOpen=0, ReadOnly=1, WriteOnly=2, ReadWrite=3, Text=4, Truncate=8 };
+    using OpenMode=int;
+    virtual ~QIODevice()=default;
+    virtual bool open(OpenMode mode)=0;
+    virtual void close()=0;
+    virtual bool isOpen()const=0;
+    virtual qint64 size()const=0;
+    virtual bool seek(qint64 position)=0;
+    virtual QByteArray readAll()=0;
+};

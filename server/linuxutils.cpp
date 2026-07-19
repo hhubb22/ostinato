@@ -20,7 +20,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include "linuxutils.h"
 
 #include <QFile>
+#ifndef OSTINATO_QT_FREE
 #include <QTextStream>
+#else
+#include <fstream>
+#include <sstream>
+#endif
 
 // Reads a text file (size < 4K) and returns content as a string
 // A terminating \n will be removed
@@ -39,8 +44,15 @@ QString readTextFile(QString fileName)
         return QString();
     }
 
+#ifdef OSTINATO_QT_FREE
+    std::ifstream in(fileName.c_str());
+    std::ostringstream contents;
+    contents << in.rdbuf();
+    QString text(contents.str());
+#else
     QTextStream in(&file);
     QString text = in.readAll();
+#endif
     file.close();
 
     if (text.endsWith('\n'))

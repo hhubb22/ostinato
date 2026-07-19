@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include "abstractport.h"
 
 #include <QThread>
+#include <atomic>
 
 struct StatsTuple;
 
@@ -46,8 +47,7 @@ private:
     bool usingInternalStats_;
     AbstractPort::PortStats *stats_;
 
-    volatile bool stop_;
+    std::atomic<bool> stop_;
 };
 
 #endif
-

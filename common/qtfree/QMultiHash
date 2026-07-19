@@ -1,0 +1,3 @@
+#pragma once
+#include "QtCoreCompat.h"
+template<class K,class V> class QMultiHash:public std::unordered_multimap<K,V,QtFreeHash<K>>{public:using Base=std::unordered_multimap<K,V,QtFreeHash<K>>;using Base::Base;void insert(const K&k,const V&v){this->emplace(k,v);}QList<V> values(const K&k)const{QList<V>r;auto p=this->equal_range(k);for(auto i=p.first;i!=p.second;++i)r<<i->second;return r;}void remove(const K&k,const V&v){auto p=this->equal_range(k);for(auto i=p.first;i!=p.second;)if(i->second==v)i=this->erase(i);else++i;}V take(const K&k){auto i=this->find(k);if(i==this->end())return V();V v=i->second;this->erase(i);return v;}};

@@ -1,0 +1,49 @@
+#pragma once
+#include "QtCoreCompat.h"
+#include <filesystem>
+#include <fstream>
+
+class QSettings {
+    QHash<QString, QVariant> values_;
+public:
+    enum Format { IniFormat };
+    QSettings(const QString &fileName, Format) { load(fileName); }
+    QSettings(const QString &organization, const QString &application) {
+        const char *xdg = std::getenv("XDG_CONFIG_HOME");
+        const char *home = std::getenv("HOME");
+        std::filesystem::path root = xdg && *xdg ? xdg
+            : (home && *home ? std::filesystem::path(home)/".config" : std::filesystem::path());
+        if (!root.empty()) {
+            const auto base = root/organization.toStdString();
+            const auto conf = base/(application.toStdString()+".conf");
+            load(QString(conf.string()));
+            if (!std::filesystem::exists(conf))
+                load(QString((base/(application.toStdString()+".ini")).string()));
+        }
+    }
+    QVariant value(const QString &key, const QVariant &fallback = QVariant()) const {
+        return values_.value(key, fallback);
+    }
+    bool contains(const QString &key) const { return values_.contains(key); }
+    void setValue(const QString &key, const QVariant &value) { values_.insert(key, value); }
+private:
+    static std::string trim(std::string value) {
+        const auto first=value.find_first_not_of(" \t\r\n");
+        if(first==std::string::npos)return {};
+        return value.substr(first,value.find_last_not_of(" \t\r\n")-first+1);
+    }
+    void load(const QString &fileName) {
+        std::ifstream input(fileName.c_str()); std::string line, section;
+        while(std::getline(input,line)) {
+            line=trim(line); if(line.empty()||line[0]==';'||line[0]=='#')continue;
+            if(line.front()=='['&&line.back()==']'){section=trim(line.substr(1,line.size()-2));continue;}
+            auto pos=line.find('='); if(pos==std::string::npos)continue;
+            std::string key=trim(line.substr(0,pos)); std::string val=trim(line.substr(pos+1));
+            const QString fullKey(section.empty()?key:section+'/'+key);
+            if (fullKey == "PortList/Include" || fullKey == "PortList/Exclude")
+                values_.insert(fullKey, QString(val).split(','));
+            else
+                values_.insert(fullKey, QString(val));
+        }
+    }
+};

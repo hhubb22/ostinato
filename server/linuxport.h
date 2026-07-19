@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #define _SERVER_LINUX_PORT_H
 
 #include <QtGlobal>
+#include <atomic>
 
 #ifdef Q_OS_LINUX
 
@@ -56,8 +57,8 @@ protected:
         int setPromisc(const char* portName);
 
         static const int kRefreshFreq_ = 1; // in seconds
-        bool stop_;
-        bool setupDone_;
+        std::atomic<bool> stop_;
+        std::atomic<bool> setupDone_;
         int ioctlSocket_;
     };
 

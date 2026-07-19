@@ -28,7 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include <QByteArray>
 #include <QHash>
-#include <QTime>
+#include <chrono>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -379,7 +379,7 @@ void LinuxPort::StatsMonitor::procStats()
     end = p + len;
 
     // Select scanf format
-    if (strstr(buf, "compressed"))
+    if (strstr(buf.constData(), "compressed"))
         fmt = fmtopt[0];
     else 
         fmt = fmtopt[1];
@@ -982,12 +982,11 @@ void LinuxPort::StatsMonitor::stop()
 
 bool LinuxPort::StatsMonitor::waitForSetupFinished(int msecs)
 {
-    QTime t;
-
-    t.start();
+    const auto start = std::chrono::steady_clock::now();
     while (!setupDone_)
     {
-        if (t.elapsed() > msecs)
+        if (std::chrono::steady_clock::now() - start
+                > std::chrono::milliseconds(msecs))
             return false;
 
         QThread::msleep(10);

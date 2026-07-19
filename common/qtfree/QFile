@@ -1,0 +1,24 @@
+#pragma once
+#include "QIODevice"
+#include <filesystem>
+
+class QFile:public QIODevice {
+protected:
+    QString name_; mutable std::fstream file_; bool open_=false;
+public:
+    QFile()=default; explicit QFile(const QString&name):name_(name){}
+    static bool exists(const QString&name){return std::filesystem::exists(name.toStdString());}
+    bool open(OpenMode mode)override{
+        std::ios::openmode flags=std::ios::binary;
+        if(mode&ReadOnly)flags|=std::ios::in;
+        if(mode&WriteOnly)flags|=std::ios::out;
+        if(mode&Truncate)flags|=std::ios::trunc;
+        file_.open(name_.c_str(),flags);return open_=file_.is_open();
+    }
+    void close()override{if(file_.is_open())file_.close();open_=false;}
+    bool isOpen()const override{return open_;}
+    qint64 size()const override{std::error_code error;auto n=std::filesystem::file_size(name_.toStdString(),error);return error?0:qint64(n);}
+    bool seek(qint64 pos)override{file_.clear();file_.seekg(pos);file_.seekp(pos);return bool(file_);}
+    QByteArray readAll()override{file_.clear();file_.seekg(0);std::string data((std::istreambuf_iterator<char>(file_)),{});return QByteArray(data.data(),int(data.size()));}
+    QString fileName()const{return name_;}
+};

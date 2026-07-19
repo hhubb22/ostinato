@@ -1,0 +1,14 @@
+#pragma once
+#include "QtCoreCompat.h"
+class QThread: public QObject {
+ std::thread thread_; std::atomic<bool> running_{false}; QString name_; std::function<void()> finished_;
+public:
+ virtual ~QThread(){wait();} virtual void run(){}
+ void start(){wait();running_=true;thread_=std::thread([this]{run();running_=false;if(finished_)finished_();});}
+ void setFinishedCallback(std::function<void()> callback){finished_=std::move(callback);}
+ bool isRunning()const{return running_;} bool wait(unsigned long=~0UL){if(thread_.joinable())thread_.join();return true;}
+ void setObjectName(const QString&n){name_=n;}
+ static void sleep(unsigned long s){std::this_thread::sleep_for(std::chrono::seconds(s));}
+ static void msleep(unsigned long ms){std::this_thread::sleep_for(std::chrono::milliseconds(ms));}
+ static void usleep(unsigned long us){std::this_thread::sleep_for(std::chrono::microseconds(us));}
+};

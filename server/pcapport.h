@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include <QTemporaryFile>
 #include <QThread>
 #include <pcap.h>
+#include <atomic>
 
 #include "abstractport.h"
 #include "pcapextra.h"
@@ -111,7 +112,7 @@ protected:
         bool isPromiscuous() { return isPromisc_; }
     protected:
         AbstractPort::PortStats *stats_;
-        bool stop_;
+        std::atomic<bool> stop_;
     private:
         pcap_t *handle_;
         Direction direction_;
@@ -139,10 +140,10 @@ protected:
         };
 
         QString         device_;
-        volatile bool   stop_;
+        std::atomic<bool> stop_;
         QTemporaryFile  capFile_;
         pcap_dumper_t   *dumpHandle_;
-        volatile State  state_;
+        std::atomic<State> state_;
     };
 
     class EmulationTransceiver: public PcapSession
@@ -166,8 +167,8 @@ protected:
 
         QString         device_;
         DeviceManager   *deviceManager_;
-        volatile bool   stop_;
-        volatile State  state_;
+        std::atomic<bool> stop_;
+        std::atomic<State> state_;
     };
 
     PortMonitor     *monitorRx_;

@@ -21,11 +21,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include "myservice.h"
 #include "params.h"
+#ifndef OSTINATO_QT_FREE
 #include "rpcserver.h"
-#include "settings.h"
 #include "../common/updater.h"
-
 #include <QMetaType>
+#endif
+#include "settings.h"
 
 extern Params appParams;
 extern const char* version;
@@ -34,6 +35,10 @@ extern const char* revision;
 Drone::Drone(QObject *parent)
      : QObject(parent)
 {
+#ifdef OSTINATO_QT_FREE
+    service = new MyService();
+    rpcServer = nullptr;
+#else
     Updater *updater = new Updater();
 
 #ifdef QT_DEBUG
@@ -48,7 +53,7 @@ Drone::Drone(QObject *parent)
     connect(updater, SIGNAL(newVersionAvailable(QString)),
             this, SLOT(onNewVersion(QString)));
     updater->checkForNewVersion();
-
+#endif
 }
 
 Drone::~Drone()
@@ -60,6 +65,18 @@ Drone::~Drone()
 bool Drone::init()
 {
     QString addr = appSettings->value(kRpcServerAddress).toString();
+#ifdef OSTINATO_QT_FREE
+    pbrpc::TcpRpcServer::Options options;
+    options.address = addr.isEmpty() ? "0.0.0.0" : addr.toStdString();
+    options.port = static_cast<std::uint16_t>(appParams.servicePortNumber());
+    rpcServer = new pbrpc::TcpRpcServer(service, options);
+    std::string error;
+    if (!rpcServer->start(&error)) {
+        qWarning("Unable to start RPC server: %s", error.c_str());
+        return false;
+    }
+    return true;
+#else
     QHostAddress address = addr.isEmpty() ?
         QHostAddress::Any : QHostAddress(addr);
 
@@ -83,6 +100,7 @@ bool Drone::init()
             rpcServer, SIGNAL(notifyClients(int, SharedProtobufMessage)));
 
     return true;
+#endif
 }
 
 MyService* Drone::rpcService()
@@ -96,4 +114,12 @@ void Drone::onNewVersion(QString newVersion)
                 "Visit http://ostinato.org to download").arg(newVersion)));
 }
 
+#ifdef OSTINATO_QT_FREE
+void Drone::notify(int type, const SharedProtobufMessage &message)
+{
+    if (rpcServer && message.data())
+        rpcServer->broadcastNotification(static_cast<std::uint16_t>(type),
+                                         *message.data());
+}
+#endif
 

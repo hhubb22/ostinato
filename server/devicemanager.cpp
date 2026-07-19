@@ -104,10 +104,10 @@ void DeviceManager::createHostDevices(void)
 DeviceManager::~DeviceManager()
 {
     // Delete *all* devices - host and enumerated
-    foreach(Device *dev, deviceList_)
+    foreach(Device *dev, deviceList_.values())
         delete dev;
 
-    foreach(OstProto::DeviceGroup *devGrp, deviceGroupList_)
+    foreach(OstProto::DeviceGroup *devGrp, deviceGroupList_.values())
         delete devGrp;
 }
 
@@ -213,7 +213,7 @@ int DeviceManager::deviceCount()
 void DeviceManager::getDeviceList(
         OstProto::PortDeviceList *deviceList)
 {
-    foreach(Device *device, sortedDeviceList_) {
+    foreach(Device *device, sortedDeviceList_.values()) {
         OstEmul::Device *dev =
             deviceList->AddExtension(OstEmul::device);
         device->getConfig(dev);
@@ -307,14 +307,14 @@ void DeviceManager::transmitPacket(PacketBuffer *pktBuf)
 
 void DeviceManager::resolveDeviceGateways()
 {
-    foreach(Device *device, deviceList_) {
+    foreach(Device *device, deviceList_.values()) {
         device->resolveGateway();
     }
 }
 
 void DeviceManager::clearDeviceNeighbors(Device::NeighborSet set)
 {
-    foreach(Device *device, deviceList_)
+    foreach(Device *device, deviceList_.values())
         device->clearNeighbors(set);
 }
 
@@ -323,7 +323,7 @@ void DeviceManager::getDeviceNeighbors(
 {
     int count = 0;
 
-    foreach(Device *device, sortedDeviceList_) {
+    foreach(Device *device, sortedDeviceList_.values()) {
         OstEmul::DeviceNeighborList *neighList =
             neighborList->AddExtension(OstEmul::device_neighbor);
         neighList->set_device_index(count++);
@@ -482,7 +482,11 @@ void DeviceManager::enumerateDevices(
     QHash<quint16, uint>::const_iterator iter = tpidList_.constBegin();
     qDebug("Port %s TPID List:", port_->name());
     while (iter != tpidList_.constEnd()) {
+#ifdef OSTINATO_QT_FREE
+        qDebug("tpid: %x (%d)", iter->first, iter->second);
+#else
         qDebug("tpid: %x (%d)", iter.key(), iter.value());
+#endif
         iter++;
     }
 
@@ -568,4 +572,3 @@ bool DeviceManager::deleteDevice(DeviceKey key)
     delete device;
     return true;
 }
-

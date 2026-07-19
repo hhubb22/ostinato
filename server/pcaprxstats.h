@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include "pcapsession.h"
 
 #include <QMutex>
+#include <atomic>
 
 class StreamTiming;
 
@@ -50,8 +51,8 @@ private:
     QString device_;
     StreamStats streamStats_;
     QMutex streamStatsLock_;
-    volatile bool stop_;
-    volatile State state_;
+    std::atomic<bool> stop_;
+    std::atomic<State> state_;
     bool isDirectional_;
 
     int portId_;

@@ -74,6 +74,11 @@ public:
         return ptr_;
     }
 
+    T* data() const
+    {
+        return ptr_;
+    }
+
 protected:
     T *ptr_;
 
@@ -85,4 +90,3 @@ protected:
 typedef class SharedPointer< ::google::protobuf::Message> SharedProtobufMessage;
 
 #endif
-

@@ -1,0 +1,4 @@
+#pragma once
+#include "QtCoreCompat.h"
+class QMutex { friend class QMutexLocker; std::recursive_mutex m_; public: void lock(){m_.lock();} void unlock(){m_.unlock();} };
+class QMutexLocker { QMutex*m_; public: explicit QMutexLocker(QMutex*m):m_(m){m_->lock();} ~QMutexLocker(){m_->unlock();} };

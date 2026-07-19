@@ -4,15 +4,34 @@ set(drone_sources
     devicemanager.cpp device.cpp emuldevice.cpp drone_main.cpp drone.cpp
     portmanager.cpp abstractport.cpp pcapport.cpp pcapsession.cpp
     pcaptransmitter.cpp pcaprxstats.cpp pcaptxstats.cpp pcaptxthread.cpp
-    pcaptxttagstats.cpp bsdhostdevice.cpp bsdport.cpp linuxhostdevice.cpp linuxport.cpp
-    linuxutils.cpp params.cpp streamtiming.cpp turbo.cpp winhostdevice.cpp
-    winpcapport.cpp myservice.cpp pcapextra.cpp packetbuffer.cpp
+    pcaptxttagstats.cpp params.cpp streamtiming.cpp turbo.cpp
+    myservice.cpp pcapextra.cpp packetbuffer.cpp
     drone.h myservice.h pcaptransmitter.h streamtiming.h)
 
+if(WIN32)
+    list(APPEND drone_sources winhostdevice.cpp winpcapport.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND drone_sources linuxhostdevice.cpp linuxport.cpp linuxutils.cpp
+        ../rpc/versioncompatibility.cpp)
+else()
+    list(APPEND drone_sources bsdhostdevice.cpp bsdport.cpp)
+endif()
+
 add_executable(drone ${drone_sources})
-target_include_directories(drone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(drone PRIVATE
-    ostproto pbrpc Qt5::Core Qt5::Network Qt5::Xml protobuf::libprotobuf)
+if(_ostinato_qtfree_drone)
+    set_property(TARGET drone PROPERTY CXX_STANDARD 17)
+    target_compile_definitions(drone PRIVATE OSTINATO_QT_FREE)
+    target_compile_definitions(drone PRIVATE Q_OS_LINUX Q_OS_UNIX)
+    target_include_directories(drone PRIVATE
+        "${CMAKE_SOURCE_DIR}/common/qtfree" "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(drone PRIVATE
+        ostproto_core pbrpc_server_core protobuf::libprotobuf Threads::Threads)
+else()
+    target_include_directories(drone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(drone PRIVATE
+        ostproto pbrpc Qt5::Core Qt5::Network Qt5::Xml protobuf::libprotobuf)
+    ostinato_qt_target(drone)
+endif()
 
 if(WIN32)
     set(NPCAP_ROOT "" CACHE PATH "Npcap SDK root directory")
@@ -65,7 +84,6 @@ endif()
 
 ostinato_add_version_source(drone)
 ostinato_target_defaults(drone)
-ostinato_qt_target(drone)
 if(APPLE)
     set_target_properties(drone PROPERTIES MACOSX_BUNDLE TRUE)
     install(TARGETS drone BUNDLE DESTINATION Ostinato)

@@ -89,6 +89,7 @@ private:
     };
 
     QSet<uint> activePortSet_;
+    QMutex activePortLock_;
 
     // XXX: TxRxKey = ttagid (8 bit MSB) + guid (24 bit LSB)
     // TODO: encode tx port in packet and use as part of key

@@ -25,25 +25,17 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     endif()
 endif()
 
-# This is intentionally diagnosed before find_package(Qt5): it is the future
-# no-Qt configuration exercised by CI, but the current drone dependency chain
-# (ostproto and pbrpc included) still contains real Qt APIs.  Do not silently
-# make configuration pass only to leave an unbuildable drone target.
-if(OSTINATO_BUILD_DRONE AND NOT OSTINATO_BUILD_CLIENT
-        AND NOT OSTINATO_BUILD_QT_TESTS)
-    message(FATAL_ERROR
-        "A drone-only no-Qt build is not available yet: drone, ostproto, and "
-        "pbrpc still depend on Qt. This check intentionally runs before "
-        "find_package(Qt5). Keep a Qt-using target enabled for the transitional "
-        "build, or finish the core dependency migration first.")
-endif()
-
 set(_ostinato_build_qt_tests OFF)
 if(BUILD_TESTING AND OSTINATO_BUILD_QT_TESTS)
     set(_ostinato_build_qt_tests ON)
 endif()
+set(_ostinato_qtfree_drone OFF)
+if(OSTINATO_BUILD_DRONE AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_ostinato_qtfree_drone ON)
+endif()
 set(_ostinato_build_any_target OFF)
-if(OSTINATO_BUILD_CLIENT OR OSTINATO_BUILD_DRONE OR _ostinato_build_qt_tests)
+if(OSTINATO_BUILD_CLIENT OR _ostinato_build_qt_tests
+        OR (OSTINATO_BUILD_DRONE AND NOT _ostinato_qtfree_drone))
     set(_ostinato_build_any_target ON)
 endif()
 
@@ -142,14 +134,16 @@ if(BUILD_TESTING)
     target_link_libraries(pbrpc_core_tests PRIVATE pbrpc_core)
     ostinato_target_defaults(pbrpc_core_tests)
     add_test(NAME pbrpc_core COMMAND pbrpc_core_tests)
-    protobuf_generate_cpp(pbrpc_server_test_sources pbrpc_server_test_headers
-        test/pbrpc_server_test.proto)
-    add_executable(pbrpc_server_core_tests test/pbrpc_server_core_tests.cpp
-        ${pbrpc_server_test_sources} ${pbrpc_server_test_headers})
-    target_include_directories(pbrpc_server_core_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-    target_link_libraries(pbrpc_server_core_tests PRIVATE pbrpc_server_core)
-    ostinato_target_defaults(pbrpc_server_core_tests)
-    add_test(NAME pbrpc_server_core COMMAND pbrpc_server_core_tests)
+    if(TARGET pbrpc_server_core)
+        protobuf_generate_cpp(pbrpc_server_test_sources pbrpc_server_test_headers
+            test/pbrpc_server_test.proto)
+        add_executable(pbrpc_server_core_tests test/pbrpc_server_core_tests.cpp
+            ${pbrpc_server_test_sources} ${pbrpc_server_test_headers})
+        target_include_directories(pbrpc_server_core_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+        target_link_libraries(pbrpc_server_core_tests PRIVATE pbrpc_server_core)
+        ostinato_target_defaults(pbrpc_server_core_tests)
+        add_test(NAME pbrpc_server_core COMMAND pbrpc_server_core_tests)
+    endif()
 endif()
 if(_ostinato_build_any_target)
     if(OSTINATO_BUILD_CLIENT)

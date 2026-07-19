@@ -34,6 +34,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include "../common/framevalueattrib.h"
 #include "../common/streambase.h"
 #include "../rpc/pbrpccontroller.h"
+#ifdef OSTINATO_QT_FREE
+#include "../rpc/pbrpc_server_core.h"
+#endif
 #include "../rpc/versioncompatibility.h"
 #include "device.h"
 #include "devicemanager.h"
@@ -41,10 +44,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include <QStringList>
 #include <QThread>
+#ifdef OSTINATO_QT_FREE
+#include <QIODevice>
+#endif
 
 
 extern Drone *drone;
 extern const char *version;
+
+#ifdef OSTINATO_QT_FREE
+void MyService::notification(int notifType, SharedProtobufMessage notifData)
+{
+    if (drone)
+        drone->notify(notifType, notifData);
+}
+#endif
 
 MyService::MyService()
 {
@@ -600,8 +614,18 @@ void MyService::getCaptureBuffer(::google::protobuf::RpcController* controller,
 
     portLock[portId]->lockForWrite();
     portInfo[portId]->stopCapture();
+#ifdef OSTINATO_QT_FREE
+    {
+        QIODevice *capture = portInfo[portId]->captureData();
+        capture->seek(0);
+        const QByteArray bytes = capture->readAll();
+        static_cast<pbrpc::ServerController*>(controller)->setBinaryBlob(
+            std::vector<std::uint8_t>(bytes.data(), bytes.data() + bytes.size()));
+    }
+#else
     static_cast<PbRpcController*>(controller)->setBinaryBlob(
         portInfo[portId]->captureData());
+#endif
     portLock[portId]->unlock();
 
     done->Run();
@@ -802,14 +826,22 @@ void MyService::checkVersion(::google::protobuf::RpcController* controller,
 
     if (compatibility == VersionCompatible) {
         response->set_result(OstProto::VersionCompatibility::kCompatible);
+#ifdef OSTINATO_QT_FREE
+        static_cast<pbrpc::ServerController*>(controller)->enableNotifications(
+#else
         static_cast<PbRpcController*>(controller)->EnableNotif(
+#endif
             request->client_name() == "python-ostinato" ? false : true);
     }
     else {
         response->set_result(OstProto::VersionCompatibility::kIncompatible);
         response->set_notes(QString("Drone needs controller version %1.%2.x")
                 .arg(my[0], my[1]).toStdString());
+#ifdef OSTINATO_QT_FREE
+        static_cast<pbrpc::ServerController*>(controller)->triggerDisconnect();
+#else
         static_cast<PbRpcController*>(controller)->TriggerDisconnect();
+#endif
     }
 
     done->Run();

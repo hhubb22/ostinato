@@ -22,6 +22,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include "pcapsession.h"
 
+#include <atomic>
+
 class StreamTiming;
 
 class PcapTxTtagStats: public PcapSession
@@ -44,8 +46,8 @@ private:
 
     QString device_;
     bool isDirectional_{true};
-    volatile State state_{kNotStarted};
-    volatile bool stop_{false};
+    std::atomic<State> state_{kNotStarted};
+    std::atomic<bool> stop_{false};
 
     int portId_;
 

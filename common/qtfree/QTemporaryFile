@@ -1,0 +1,10 @@
+#pragma once
+#include "QFile"
+#include <unistd.h>
+
+class QTemporaryFile:public QFile {
+public:
+    QTemporaryFile(){char pattern[]="/tmp/ostinato-capture-XXXXXX";int fd=mkstemp(pattern);if(fd>=0){::close(fd);name_=QString(pattern);}}
+    ~QTemporaryFile()override{close();if(!name_.isEmpty())std::remove(name_.c_str());}
+    bool open(){return QFile::open(ReadWrite|Truncate);}
+};

@@ -205,8 +205,15 @@ bool AbstractPort::setTrackStreamStats(bool enable)
     // singleton resides in the main thread and its' start/stop methods
     // start/stop timers which cannot be done across Qt Threads. Hence
     // this slightly hacky way of invoking those methods
+#ifdef OSTINATO_QT_FREE
+    if (enable)
+        streamTiming_->start(id());
+    else
+        streamTiming_->stop(id());
+#else
     QMetaObject::invokeMethod(streamTiming_, enable ? "start" : "stop",
         Qt::QueuedConnection, Q_ARG(uint, id()));
+#endif
     data_.set_is_tracking_stream_stats(enable);
 
     return true;

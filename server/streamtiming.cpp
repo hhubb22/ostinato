@@ -21,11 +21,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include "timestamp.h"
 
+#ifndef OSTINATO_QT_FREE
 #include <QCoreApplication>
+#endif
 
 StreamTiming::StreamTiming(QObject *parent)
     : QObject(parent)
 {
+#ifndef OSTINATO_QT_FREE
     // This class MUST be part of the main thread so that timers can work
     Q_ASSERT(this->thread() == QCoreApplication::instance()->thread());
 
@@ -36,10 +39,19 @@ StreamTiming::StreamTiming(QObject *parent)
     gcTimer_ = new QTimer(this);
     connect(gcTimer_, &QTimer::timeout, this, &StreamTiming::deleteStaleRecords);
     gcTimer_->setInterval(30000);
+#else
+    timer_ = new QTimer(this);
+    timer_->setCallback([this] { processRecords(); });
+    timer_->setInterval(3000);
+    gcTimer_ = new QTimer(this);
+    gcTimer_->setCallback([this] { deleteStaleRecords(); });
+    gcTimer_->setInterval(30000);
+#endif
 }
 
 void StreamTiming::start(uint portId)
 {
+    QMutexLocker activePortLocker(&activePortLock_);
     if (activePortSet_.isEmpty()) { // First port?
         timer_->start();
         gcTimer_->start();
@@ -51,6 +63,7 @@ void StreamTiming::start(uint portId)
 
 void StreamTiming::stop(uint portId)
 {
+    QMutexLocker activePortLocker(&activePortLock_);
     activePortSet_.remove(portId);
     qDebug("Stream Latency tracking stopped for port %u", portId);
     if (activePortSet_.isEmpty()) { // Last port?
@@ -119,14 +132,21 @@ int StreamTiming::processRecords()
 
     auto i = rxHash_.begin();
     while (i != rxHash_.end()) {
-        if (txHash_.contains(i.key())) {
-            struct timespec txTime = txHash_.take(i.key()).timeStamp;
-            struct timespec rxTime = i.value().timeStamp;
+#ifdef OSTINATO_QT_FREE
+        const TxRxKey key = i->first;
+        const TtagData value = i->second;
+#else
+        const TxRxKey key = i.key();
+        const TtagData value = i.value();
+#endif
+        if (txHash_.contains(key)) {
+            struct timespec txTime = txHash_.take(key).timeStamp;
+            struct timespec rxTime = value.timeStamp;
             struct timespec diff;
             timespecsub(&rxTime, &txTime, &diff);
 
-            uint guid = guidFromKey(i.key());
-            uint portId = i.value().portId;
+            uint guid = guidFromKey(key);
+            uint portId = value.portId;
 
             if (!timing_.contains(portId))
                 timing_.insert(portId, new PortTiming);
@@ -144,12 +164,12 @@ int StreamTiming::processRecords()
             count++;
 
             timingDebug("[%u/%u/%u] diff %ld.%09ld (%ld.%09ld - %ld.%09ld)",
-                i.value().portId, guid, ttagIdFromKey(i.key()),
+                value.portId, guid, ttagIdFromKey(key),
                 diff.tv_sec, diff.tv_nsec,
                 rxTime.tv_sec, rxTime.tv_nsec,
                 txTime.tv_sec, txTime.tv_nsec);
             timingDebug("[%u/%u](%d) total %ld.%09ld count %u jittersum %09llu",
-                i.value().portId, guid, count,
+                value.portId, guid, count,
                 guidTiming.sumDelays.tv_sec, guidTiming.sumDelays.tv_nsec,
                 guidTiming.countDelays, guidTiming.sumJitter);
         }
@@ -181,7 +201,11 @@ int StreamTiming::deleteStaleRecords()
 
     auto i = txHash_.begin();
     while (i != txHash_.end()) {
+#ifdef OSTINATO_QT_FREE
+        struct timespec txTime = i->second.timeStamp;
+#else
         struct timespec txTime = i.value().timeStamp;
+#endif
         struct timespec diff;
         timespecsub(&now, &txTime, &diff);
         timingDebug("gc diff %ld", diff.tv_sec);
@@ -207,7 +231,11 @@ StreamTiming* StreamTiming::instance()
     // to call this - hence this singleton is created when the first port
     // is created
     if (!instance)
+#ifdef OSTINATO_QT_FREE
+        instance = new StreamTiming();
+#else
         instance = new StreamTiming(QCoreApplication::instance());
+#endif
 
     return instance;
 }

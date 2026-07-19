@@ -22,6 +22,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include <QObject>
 
+#ifdef OSTINATO_QT_FREE
+#include "../rpc/pbrpc_server_core.h"
+#include "../rpc/sharedprotobufmessage.h"
+#endif
+
 class RpcServer;
 class MyService;
 
@@ -33,12 +38,19 @@ public:
     ~Drone();
     bool init();
     MyService* rpcService();
+#ifdef OSTINATO_QT_FREE
+    void notify(int type, const SharedProtobufMessage &message);
+#endif
 
 private slots:
     void onNewVersion(QString version);
 
 private:
+#ifdef OSTINATO_QT_FREE
+    pbrpc::TcpRpcServer      *rpcServer;
+#else
     RpcServer               *rpcServer;
+#endif
     MyService               *service;
 }; 
 #endif
