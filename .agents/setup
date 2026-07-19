@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  cmake \
+  g++ \
+  libnl-3-dev \
+  libnl-route-3-dev \
+  libpcap-dev \
+  libprotobuf-dev \
+  libqt5svg5-dev \
+  ninja-build \
+  pkg-config \
+  protobuf-compiler \
+  qtbase5-dev
+
 if ! gh auth status --hostname github.com >/dev/null 2>&1; then
   echo "GitHub CLI is not authenticated"
   exit 1
