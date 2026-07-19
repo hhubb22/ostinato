@@ -176,11 +176,11 @@ void ProtocolManager::populateNeighbourProtocols()
 {
     neighbourProtocols.clear();
 
-    foreach(AbstractProtocol *p, protocolList)
+    foreach(AbstractProtocol *p, protocolList.values())
     {
         if (p->protocolIdType() != AbstractProtocol::ProtocolIdNone)
         {
-            foreach(AbstractProtocol *q, protocolList)
+            foreach(AbstractProtocol *q, protocolList.values())
             {
                 if (q->protocolId(p->protocolIdType()))
                     neighbourProtocols.insert(

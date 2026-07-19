@@ -21,8 +21,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #define _PB_RPC_COMMON_H
 
 #include <QByteArray>
-#include <QtEndian>
 #include <QtGlobal>
+
+#include "pbrpc_core.h"
 
 #include <climits>
 #include <cstring>
@@ -61,7 +62,7 @@ enum PbRpcFrameStatus
 
 inline bool pbRpcMessageTypeIsValid(quint16 type)
 {
-    return type >= PB_MSG_TYPE_REQUEST && type <= PB_MSG_TYPE_NOTIFY;
+    return pbrpc::isValidMessageType(type);
 }
 
 inline bool pbRpcPayloadLengthIsValid(quint32 length)
@@ -72,23 +73,20 @@ inline bool pbRpcPayloadLengthIsValid(quint32 length)
 inline void pbRpcEncodeHeader(char *header, quint16 type, quint16 method,
                               quint32 length)
 {
-    const quint16 beType = qToBigEndian(type);
-    const quint16 beMethod = qToBigEndian(method);
-    const quint32 beLength = qToBigEndian(length);
-
-    std::memcpy(header, &beType, sizeof(beType));
-    std::memcpy(header + 2, &beMethod, sizeof(beMethod));
-    std::memcpy(header + 4, &beLength, sizeof(beLength));
+    const std::vector<std::uint8_t> encoded = pbrpc::encodeHeader(
+        static_cast<pbrpc::MessageType>(type), method, length);
+    std::memcpy(header, encoded.data(), encoded.size());
 }
 
 inline bool pbRpcDecodeHeader(const uchar *data, int size, PbRpcHeader &header)
 {
-    if (size < PB_HDR_SIZE)
+    pbrpc::Header coreHeader;
+    if (size < 0 || !pbrpc::decodeHeader(pbrpc::ByteView(data, std::size_t(size)),
+                                         coreHeader))
         return false;
-
-    header.type = qFromBigEndian<quint16>(data);
-    header.method = qFromBigEndian<quint16>(data + 2);
-    header.length = qFromBigEndian<quint32>(data + 4);
+    header.type = static_cast<quint16>(coreHeader.type);
+    header.method = coreHeader.method;
+    header.length = coreHeader.length;
     return true;
 }
 

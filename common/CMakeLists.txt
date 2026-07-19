@@ -41,13 +41,30 @@ endfunction()
 
 ostinato_generate_protos(ostproto_pb_sources ostproto_pb_headers ${OSTPROTO_PROTOS})
 
-add_library(ostproto STATIC
+set(OSTPROTO_CORE_SOURCES
     abstractprotocol.cpp crc32c.cpp protocolmanager.cpp protocollist.cpp
     protocollistiterator.cpp streambase.cpp updater.cpp mac.cpp vlan.cpp svlan.cpp
     eth2.cpp dot3.cpp llc.cpp snap.cpp stp.cpp arp.cpp ip4.cpp ip6.cpp gmp.cpp
     gre.cpp icmp.cpp igmp.cpp mld.cpp tcp.cpp udp.cpp textproto.cpp hexdump.cpp
-    packet.cpp payload.cpp sample.cpp sign.cpp userscript.cpp
-    updater.h userscript.h ${ostproto_pb_sources} ${ostproto_pb_headers})
+    packet.cpp payload.cpp sample.cpp sign.cpp userscript.cpp)
+
+list(REMOVE_ITEM OSTPROTO_CORE_SOURCES updater.cpp)
+add_library(ostproto_core STATIC
+    ${OSTPROTO_CORE_SOURCES} userscript.h ${ostproto_pb_sources} ${ostproto_pb_headers})
+set_property(TARGET ostproto_core PROPERTY CXX_STANDARD 17)
+target_include_directories(ostproto_core BEFORE PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/qtfree"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(ostproto_core PUBLIC QuickJS::QuickJS protobuf::libprotobuf)
+ostinato_target_defaults(ostproto_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ostproto_core PRIVATE -Wno-cast-function-type)
+endif()
+
+if(_ostinato_build_any_target)
+add_library(ostproto STATIC
+    ${OSTPROTO_CORE_SOURCES} updater.cpp updater.h userscript.h
+    ${ostproto_pb_sources} ${ostproto_pb_headers})
 target_include_directories(ostproto PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(ostproto PUBLIC
@@ -58,6 +75,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ostproto PRIVATE -Wno-cast-function-type)
 endif()
 
+endif()
+
+if(_ostinato_build_any_target)
 ostinato_generate_protos(ostfile_pb_sources ostfile_pb_headers fileformat.proto)
 add_library(ostfile STATIC
     ostprotolib.cpp nativefileformat.cpp ossnfileformat.cpp ostmfileformat.cpp
@@ -102,4 +122,5 @@ target_link_libraries(ostprotogui PUBLIC
     ostproto qhexedit2 Qt5::Network Qt5::Widgets Qt5::Xml)
 ostinato_target_defaults(ostprotogui)
 ostinato_qt_target(ostprotogui)
+endif()
 endif()
