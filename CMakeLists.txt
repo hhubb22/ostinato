@@ -130,9 +130,18 @@ endfunction()
 
 add_subdirectory(common)
 add_subdirectory(rpc)
-if(UNIX AND TARGET ostproto_generated_headers)
+if(TARGET ostproto_generated_headers)
+    add_library(ostinato_client_domain STATIC
+        client/core/port_state.cpp client/core/port_state.h)
+    add_dependencies(ostinato_client_domain ostproto_generated_headers)
+    target_include_directories(ostinato_client_domain PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/client/core"
+        "${CMAKE_CURRENT_BINARY_DIR}/common")
+    target_link_libraries(ostinato_client_domain PUBLIC ostproto_messages)
+    ostinato_target_defaults(ostinato_client_domain)
+endif()
+if(UNIX AND TARGET ostinato_client_domain AND TARGET pbrpc_client_core)
     add_library(ostinato_client_core STATIC
-        client/core/port_state.cpp client/core/port_state.h
         client/core/client_session.cpp client/core/client_session.h)
     add_dependencies(ostinato_client_core ostproto_generated_headers)
     target_include_directories(ostinato_client_core PUBLIC
@@ -140,7 +149,7 @@ if(UNIX AND TARGET ostproto_generated_headers)
         "${CMAKE_CURRENT_SOURCE_DIR}/rpc"
         "${CMAKE_CURRENT_BINARY_DIR}/common")
     target_link_libraries(ostinato_client_core PUBLIC
-        pbrpc_client_core ostproto_messages)
+        ostinato_client_domain pbrpc_client_core)
     ostinato_target_defaults(ostinato_client_core)
 endif()
 if(BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS)

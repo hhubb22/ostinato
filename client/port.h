@@ -23,11 +23,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include <QDir>
 #include <QHash>
 #include <QList>
-#include <QSet>
 #include <QString>
 #include <QTemporaryFile>
 
 #include "stream.h"
+#include "port_state.h"
 
 //class StreamModel;
 namespace OstEmul {
@@ -50,17 +50,14 @@ class Port : public QObject {
     quint32        mPortId;
     quint32        mPortGroupId;
     QString        mUserAlias;            // user defined
-    bool           dirty_;
+    ostinato::client::PortSyncState syncState_;
 
     double avgPacketsPerSec_; 
     double avgBitsPerSec_;
     int numActiveStreams_;
 
-    QList<quint32>    mLastSyncStreamList;
     QList<Stream*>    mStreams;        // sorted by stream's ordinal value
 
-    QList<quint32> lastSyncDeviceGroupList_;
-    QSet<quint32>  modifiedDeviceGroupList_;
     QList<OstProto::DeviceGroup*> deviceGroups_;
     QList<OstEmul::Device*> devices_;
     QHash<quint32, OstEmul::DeviceNeighborList*> deviceNeighbors_;
@@ -175,7 +172,8 @@ public:
     bool updateStream(uint streamId, OstProto::Stream *stream);
     //@}
 
-    bool isDirty() { return dirty_; }
+    bool isDirty() { return syncState_.dirty(); }
+    ostinato::client::ApplyPlan applyPlan() const;
     void getDeletedStreamsSinceLastSync(OstProto::StreamIdList &streamIdList);
     void getNewStreamsSinceLastSync(OstProto::StreamIdList &streamIdList);
     void getModifiedStreamsSinceLastSync(

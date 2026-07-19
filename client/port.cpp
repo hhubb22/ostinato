@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #include <QProgressDialog>
 #include <QVariant>
 #include <google/protobuf/descriptor.h>
+#include <map>
 #include <vector>
 #include <cmath>
 
@@ -59,7 +60,6 @@ Port::Port(quint32 id, quint32 portGroupId)
     stats.mutable_port_id()->set_id(id);
     mPortGroupId = portGroupId;
     capFile_ = NULL;
-    dirty_ = false;
 }
 
 Port::~Port()
@@ -108,11 +108,14 @@ void Port::reorderStreamsByOrdinals()
 
 void Port::setDirty(bool dirty)
 {
-    if (dirty == dirty_)
+    if (dirty == syncState_.dirty())
         return;
 
-    dirty_ = dirty;
-    emit localConfigChanged(mPortGroupId, mPortId, dirty_);
+    if (dirty)
+        syncState_.markDirty();
+    else
+        syncState_.clearDirty();
+    emit localConfigChanged(mPortGroupId, mPortId, dirty);
 }
 
 void Port::recalculateAverageRates()
@@ -399,52 +402,22 @@ void Port::getDeletedStreamsSinceLastSync(
     OstProto::StreamIdList &streamIdList)
 {
     streamIdList.clear_stream_id();
-    for (int i = 0; i < mLastSyncStreamList.size(); i++)
-    {
-        int j;
-
-        for (j = 0; j < mStreams.size(); j++)
-        {
-            if (mLastSyncStreamList[i] == mStreams[j]->id())
-                break;
-        }
-
-        if (j < mStreams.size())
-        {
-            // stream still exists!
-            continue;
-        }    
-        else
-        {
-            // stream has been deleted since last sync
-            OstProto::StreamId    *s;
-
-            s = streamIdList.add_stream_id();
-            s->set_id(mLastSyncStreamList.at(i));
-        }
-    }
+    std::vector<std::uint32_t> current;
+    foreach (Stream *stream, mStreams)
+        current.push_back(stream->id());
+    for (std::uint32_t id : syncState_.deletedStreams(current))
+        streamIdList.add_stream_id()->set_id(id);
 }
 
 void Port::getNewStreamsSinceLastSync(
     OstProto::StreamIdList &streamIdList)
 {
     streamIdList.clear_stream_id();
-    for (int i = 0; i < mStreams.size(); i++)
-    {
-        if (mLastSyncStreamList.contains(mStreams[i]->id()))
-        {
-            // existing stream!
-            continue;
-        }
-        else
-        {
-            // new stream!
-            OstProto::StreamId    *s;
-
-            s = streamIdList.add_stream_id();
-            s->set_id(mStreams[i]->id());
-        }
-    }
+    std::vector<std::uint32_t> current;
+    foreach (Stream *stream, mStreams)
+        current.push_back(stream->id());
+    for (std::uint32_t id : syncState_.newStreams(current))
+        streamIdList.add_stream_id()->set_id(id);
 }
 
 void Port::getModifiedStreamsSinceLastSync(
@@ -467,30 +440,44 @@ void Port::getDeletedDeviceGroupsSinceLastSync(
     OstProto::DeviceGroupIdList &deviceGroupIdList)
 {
     deviceGroupIdList.clear_device_group_id();
-    foreach(int id, lastSyncDeviceGroupList_) {
-        if (!deviceGroupById(id))
-            deviceGroupIdList.add_device_group_id()->set_id(id);
-    }
+    std::vector<std::uint32_t> current;
+    foreach (OstProto::DeviceGroup *group, deviceGroups_)
+        current.push_back(group->device_group_id().id());
+    for (std::uint32_t id : syncState_.deletedDeviceGroups(current))
+        deviceGroupIdList.add_device_group_id()->set_id(id);
 }
 
 void Port::getNewDeviceGroupsSinceLastSync(
     OstProto::DeviceGroupIdList &deviceGroupIdList)
 {
     deviceGroupIdList.clear_device_group_id();
-    foreach(OstProto::DeviceGroup *dg, deviceGroups_) {
-        quint32 dgid = dg->device_group_id().id();
-        if (!lastSyncDeviceGroupList_.contains(dgid))
-            deviceGroupIdList.add_device_group_id()->set_id(dgid);
-    }
+    std::vector<std::uint32_t> current;
+    foreach (OstProto::DeviceGroup *group, deviceGroups_)
+        current.push_back(group->device_group_id().id());
+    for (std::uint32_t id : syncState_.newDeviceGroups(current))
+        deviceGroupIdList.add_device_group_id()->set_id(id);
 }
 
 void Port::getModifiedDeviceGroupsSinceLastSync(
     OstProto::DeviceGroupConfigList &deviceGroupConfigList)
 {
     deviceGroupConfigList.clear_device_group();
-    foreach(quint32 id, modifiedDeviceGroupList_)
-        deviceGroupConfigList.add_device_group()
-                                ->CopyFrom(*deviceGroupById(id));
+    std::vector<std::uint32_t> current;
+    foreach (OstProto::DeviceGroup *group, deviceGroups_)
+        current.push_back(group->device_group_id().id());
+    for (std::uint32_t id : syncState_.modifiedDeviceGroups(current))
+        deviceGroupConfigList.add_device_group()->CopyFrom(*deviceGroupById(id));
+}
+
+ostinato::client::ApplyPlan Port::applyPlan() const
+{
+    std::map<std::uint32_t, OstProto::Stream> streams;
+    foreach (Stream *stream, mStreams)
+        stream->protoDataCopyInto(streams[stream->id()]);
+    std::map<std::uint32_t, OstProto::DeviceGroup> groups;
+    foreach (OstProto::DeviceGroup *group, deviceGroups_)
+        groups[group->device_group_id().id()].CopyFrom(*group);
+    return ostinato::client::ApplyPlan::create(streams, groups, syncState_);
 }
 
 /*!
@@ -535,19 +522,15 @@ bool Port::modifiablePortConfig(OstProto::Port &config) const
 void Port::when_syncComplete()
 {
     //reorderStreamsByOrdinals();
-
-    mLastSyncStreamList.clear();
-    for (int i=0; i<mStreams.size(); i++)
-        mLastSyncStreamList.append(mStreams[i]->id());
-
-    lastSyncDeviceGroupList_.clear();
-    for (int i = 0; i < deviceGroups_.size(); i++) {
-        lastSyncDeviceGroupList_.append(
-                deviceGroups_.at(i)->device_group_id().id());
-    }
-    modifiedDeviceGroupList_.clear();
-
-    setDirty(false);
+    std::vector<std::uint32_t> streams, groups;
+    foreach (Stream *stream, mStreams)
+        streams.push_back(stream->id());
+    foreach (OstProto::DeviceGroup *group, deviceGroups_)
+        groups.push_back(group->device_group_id().id());
+    const bool wasDirty = syncState_.dirty();
+    syncState_.markSyncComplete(streams, groups);
+    if (wasDirty)
+        emit localConfigChanged(mPortGroupId, mPortId, false);
 }
 
 void Port::updateStats(OstProto::PortStats *portStats)
@@ -787,8 +770,8 @@ OstProto::DeviceGroup* Port::mutableDeviceGroupByIndex(int index)
     OstProto::DeviceGroup *devGrp = deviceGroups_.at(index);
 
     // Caller can modify DeviceGroup - assume she will
-    modifiedDeviceGroupList_.insert(devGrp->device_group_id().id());
     setDirty(true);
+    syncState_.markDeviceGroupModified(devGrp->device_group_id().id());
 
     return devGrp;
 }
@@ -821,7 +804,6 @@ bool Port::newDeviceGroupAt(int index, const OstProto::DeviceGroup *deviceGroup)
 
     devGrp->mutable_device_group_id()->set_id(newDeviceGroupId());
     deviceGroups_.insert(index, devGrp);
-    modifiedDeviceGroupList_.insert(devGrp->device_group_id().id());
     setDirty(true);
 
     return true;
@@ -833,7 +815,6 @@ bool Port::deleteDeviceGroupAt(int index)
         return false;
 
     OstProto::DeviceGroup *devGrp = deviceGroups_.takeAt(index);
-    modifiedDeviceGroupList_.remove(devGrp->device_group_id().id());
     delete devGrp;
     setDirty(true);
 
@@ -990,4 +971,3 @@ void Port::deviceInfoRefreshed()
 {
     emit deviceInfoChanged();
 }
-

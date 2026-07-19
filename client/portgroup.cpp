@@ -525,12 +525,6 @@ _error_exit:
 
 void PortGroup::when_configApply(int portIndex)
 {
-    OstProto::StreamIdList *streamIdList;
-    OstProto::StreamConfigList *streamConfigList;
-    OstProto::BuildConfig *buildConfig;
-    OstProto::Ack *ack;
-    PbRpcController *controller;
-
     Q_ASSERT(portIndex < mPorts.size());
 
     if (state() != QAbstractSocket::ConnectedState)
@@ -541,138 +535,99 @@ void PortGroup::when_configApply(int portIndex)
 
     applyTimer_.start();
 
-    //
-    // Update/Sync DeviceGroups
-    //
-    OstProto::DeviceGroupIdList *deviceGroupIdList;
-    OstProto::DeviceGroupConfigList *deviceGroupConfigList;
-    bool refreshReqd = false;
-
-    qDebug("applying 'deleted deviceGroups' ...");
-    deviceGroupIdList = new OstProto::DeviceGroupIdList;
-    deviceGroupIdList->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    mPorts[portIndex]->getDeletedDeviceGroupsSinceLastSync(*deviceGroupIdList);
-    if (deviceGroupIdList->device_group_id_size()) {
-        logInfo(id(), mPorts[portIndex]->id(),
-                QString("Deleting old DeviceGroups"));
-        ack = new OstProto::Ack;
-        controller = new PbRpcController(deviceGroupIdList, ack);
-        serviceStub->deleteDeviceGroup(controller, deviceGroupIdList, ack,
-            NewCallback(this, &PortGroup::processDeleteDeviceGroupAck,
-                        controller));
-        refreshReqd = true;
-    }
-    else
-        delete deviceGroupIdList;
-
-    qDebug("applying 'new deviceGroups' ...");
-    deviceGroupIdList = new OstProto::DeviceGroupIdList;
-    deviceGroupIdList->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    mPorts[portIndex]->getNewDeviceGroupsSinceLastSync(*deviceGroupIdList);
-    if (deviceGroupIdList->device_group_id_size()) {
-        logInfo(id(), mPorts[portIndex]->id(),
-                QString("Creating new DeviceGroups"));
-        ack = new OstProto::Ack;
-        controller = new PbRpcController(deviceGroupIdList, ack);
-        serviceStub->addDeviceGroup(controller, deviceGroupIdList, ack,
-            NewCallback(this, &PortGroup::processAddDeviceGroupAck,
-                        controller));
-        refreshReqd = true;
-    }
-    else
-        delete deviceGroupIdList;
-
-    qDebug("applying 'modified deviceGroups' ...");
-    deviceGroupConfigList = new OstProto::DeviceGroupConfigList;
-    deviceGroupConfigList->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    mPorts[portIndex]->getModifiedDeviceGroupsSinceLastSync(
-            *deviceGroupConfigList);
-    if (deviceGroupConfigList->device_group_size()) {
-        logInfo(id(), mPorts[portIndex]->id(),
-                QString("Modifying changed DeviceGroups"));
-        ack = new OstProto::Ack;
-        controller = new PbRpcController(deviceGroupConfigList, ack);
-        serviceStub->modifyDeviceGroup(controller, deviceGroupConfigList, ack,
+    Port *port = mPorts[portIndex];
+    const ostinato::client::ApplyPlan plan = port->applyPlan();
+    for (const ostinato::client::ApplyOperation &operation : plan.operations()) {
+        OstProto::Ack *ack = new OstProto::Ack;
+        switch (operation.kind) {
+        case ostinato::client::ApplyOperation::DeleteDeviceGroups: {
+            OstProto::DeviceGroupIdList *request = new OstProto::DeviceGroupIdList;
+            request->mutable_port_id()->set_id(port->id());
+            port->getDeletedDeviceGroupsSinceLastSync(*request);
+            logInfo(id(), port->id(), QString("Deleting old DeviceGroups"));
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->deleteDeviceGroup(controller, request, ack,
+                NewCallback(this, &PortGroup::processDeleteDeviceGroupAck, controller));
+            break;
+        }
+        case ostinato::client::ApplyOperation::AddDeviceGroups: {
+            OstProto::DeviceGroupIdList *request = new OstProto::DeviceGroupIdList;
+            request->mutable_port_id()->set_id(port->id());
+            port->getNewDeviceGroupsSinceLastSync(*request);
+            logInfo(id(), port->id(), QString("Creating new DeviceGroups"));
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->addDeviceGroup(controller, request, ack,
+                NewCallback(this, &PortGroup::processAddDeviceGroupAck, controller));
+            break;
+        }
+        case ostinato::client::ApplyOperation::ModifyDeviceGroups: {
+            OstProto::DeviceGroupConfigList *request = new OstProto::DeviceGroupConfigList;
+            request->mutable_port_id()->set_id(port->id());
+            port->getModifiedDeviceGroupsSinceLastSync(*request);
+            logInfo(id(), port->id(), QString("Modifying changed DeviceGroups"));
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->modifyDeviceGroup(controller, request, ack,
                 NewCallback(this, &PortGroup::processModifyDeviceGroupAck,
-                    portIndex, controller));
-        refreshReqd = true;
-    }
-    else
-        delete deviceGroupConfigList;
-
-    if (refreshReqd)
-        getDeviceInfo(portIndex);
-
-    //
-    // Update/Sync Streams
-    //
-    qDebug("applying 'deleted streams' ...");
-    streamIdList = new OstProto::StreamIdList;
-    streamIdList->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    mPorts[portIndex]->getDeletedStreamsSinceLastSync(*streamIdList);
-    if (streamIdList->stream_id_size()) {
-        logInfo(id(), mPorts[portIndex]->id(), QString("Deleting old Streams"));
-        ack = new OstProto::Ack;
-        controller = new PbRpcController(streamIdList, ack);
-        serviceStub->deleteStream(controller, streamIdList, ack,
-            NewCallback(this, &PortGroup::processDeleteStreamAck, controller));
-    }
-    else
-        delete streamIdList;
-
-    qDebug("applying 'new streams' ...");
-    streamIdList = new OstProto::StreamIdList;
-    streamIdList->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    mPorts[portIndex]->getNewStreamsSinceLastSync(*streamIdList);
-    if (streamIdList->stream_id_size()) {
-        logInfo(id(), mPorts[portIndex]->id(), QString("Creating new Streams"));
-        ack = new OstProto::Ack;
-        controller = new PbRpcController(streamIdList, ack);
-        serviceStub->addStream(controller, streamIdList, ack,
+                            portIndex, controller));
+            break;
+        }
+        case ostinato::client::ApplyOperation::RefreshDevices:
+            delete ack;
+            getDeviceInfo(portIndex);
+            break;
+        case ostinato::client::ApplyOperation::DeleteStreams: {
+            OstProto::StreamIdList *request = new OstProto::StreamIdList;
+            request->mutable_port_id()->set_id(port->id());
+            port->getDeletedStreamsSinceLastSync(*request);
+            logInfo(id(), port->id(), QString("Deleting old Streams"));
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->deleteStream(controller, request, ack,
+                NewCallback(this, &PortGroup::processDeleteStreamAck, controller));
+            break;
+        }
+        case ostinato::client::ApplyOperation::AddStreams: {
+            OstProto::StreamIdList *request = new OstProto::StreamIdList;
+            request->mutable_port_id()->set_id(port->id());
+            port->getNewStreamsSinceLastSync(*request);
+            logInfo(id(), port->id(), QString("Creating new Streams"));
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->addStream(controller, request, ack,
                 NewCallback(this, &PortGroup::processAddStreamAck, controller));
-    }
-    else
-        delete streamIdList;
-
-    qDebug("applying 'modified streams' ...");
-    streamConfigList = new OstProto::StreamConfigList;
-    streamConfigList->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    mPorts[portIndex]->getModifiedStreamsSinceLastSync(*streamConfigList);
-    if (streamConfigList->stream_size()) {
-        logInfo(id(), mPorts[portIndex]->id(),
-                QString("Modifying changed Streams"));
-        ack = new OstProto::Ack;
-        controller = new PbRpcController(streamConfigList, ack);
-        serviceStub->modifyStream(controller, streamConfigList, ack,
+            break;
+        }
+        case ostinato::client::ApplyOperation::ModifyStreams: {
+            OstProto::StreamConfigList *request = new OstProto::StreamConfigList;
+            request->mutable_port_id()->set_id(port->id());
+            port->getModifiedStreamsSinceLastSync(*request);
+            logInfo(id(), port->id(), QString("Modifying changed Streams"));
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->modifyStream(controller, request, ack,
                 NewCallback(this, &PortGroup::processModifyStreamAck,
-                    portIndex, controller));
+                            portIndex, controller));
+            break;
+        }
+        case ostinato::client::ApplyOperation::ResolveNeighbors: {
+            logInfo(id(), port->id(), QString("Resolving device neighbors"));
+            OstProto::PortIdList *request = new OstProto::PortIdList;
+            request->add_port_id()->set_id(port->id());
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->resolveDeviceNeighbors(controller, request, ack,
+                NewCallback(this, &PortGroup::processResolveDeviceNeighborsAck,
+                            controller));
+            break;
+        }
+        case ostinato::client::ApplyOperation::Build: {
+            logInfo(id(), port->id(), QString("Re-building packets"));
+            OstProto::BuildConfig *request = new OstProto::BuildConfig;
+            request->mutable_port_id()->set_id(port->id());
+            PbRpcController *controller = new PbRpcController(request, ack);
+            serviceStub->build(controller, request, ack,
+                NewCallback(this, &PortGroup::processApplyBuildAck,
+                            portIndex, controller));
+            break;
+        }
+        }
     }
-    else
-        delete streamConfigList;
-
-    qDebug("resolve neighbors before building ...");
-    logInfo(id(), mPorts[portIndex]->id(),
-            QString("Resolving device neighbors"));
-    OstProto::PortIdList *portIdList = new OstProto::PortIdList;
-    OstProto::PortId *portId = portIdList->add_port_id();
-    portId->set_id(mPorts[portIndex]->id());
-    ack = new OstProto::Ack;
-    controller = new PbRpcController(portIdList, ack);
-    serviceStub->resolveDeviceNeighbors(controller, portIdList, ack,
-        NewCallback(this, &PortGroup::processResolveDeviceNeighborsAck,
-                    controller));
-
-    qDebug("finish apply by building ...");
-    logInfo(id(), mPorts[portIndex]->id(),
-            QString("Re-building packets"));
-    buildConfig = new OstProto::BuildConfig;
-    ack = new OstProto::Ack;
-    controller = new PbRpcController(buildConfig, ack);
-
-    buildConfig->mutable_port_id()->set_id(mPorts[portIndex]->id());
-    serviceStub->build(controller, buildConfig, ack,
-            NewCallback(this, &PortGroup::processApplyBuildAck,
-                portIndex, controller));
 }
 
 void PortGroup::processAddDeviceGroupAck(PbRpcController *controller)

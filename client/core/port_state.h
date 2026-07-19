@@ -16,6 +16,7 @@ public:
     const std::set<std::uint32_t> &syncedDeviceGroupIds() const { return deviceGroups_; }
     bool dirty() const { return dirty_; }
     void markDirty() { dirty_ = true; }
+    void clearDirty() { dirty_ = false; }
     void markDeviceGroupModified(std::uint32_t id) { modifiedDeviceGroups_.insert(id); dirty_ = true; }
     std::vector<std::uint32_t> newStreams(const std::vector<std::uint32_t> &current) const;
     std::vector<std::uint32_t> deletedStreams(const std::vector<std::uint32_t> &current) const;

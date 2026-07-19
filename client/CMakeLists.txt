@@ -37,6 +37,7 @@ if(APPLE)
 endif()
 target_include_directories(ostinato PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ostinato PRIVATE
+    ostinato_client_domain
     ostfilegui ostfile ostprotogui ostproto pbrpc qhexedit2 protobuf::libprotobuf
     Qt5::Network Qt5::Svg Qt5::Widgets Qt5::Xml)
 if(TARGET modeltest)
