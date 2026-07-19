@@ -40,3 +40,42 @@ jobs:
 
       - name: Run tests (CTest)
         run: ctest --test-dir build --output-on-failure
+
+  memory-checks:
+    runs-on: ubuntu-latest
+    container: ghcr.io/hhubb22/ostinato-build:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install memory-check tools
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends clang valgrind
+
+      - name: Configure ASan build
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          cmake -S . -B build-asan -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON
+          -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address
+
+      - name: Build and run ASan tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+        run: |
+          cmake --build build-asan --parallel
+          ctest --test-dir build-asan --output-on-failure
+
+      - name: Configure Valgrind build
+        run: cmake -S . -B build-valgrind -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON
+
+      - name: Build and run tests under Valgrind
+        run: |
+          cmake --build build-valgrind --target ostinato_compatibility_tests --parallel
+          valgrind --error-exitcode=1 --leak-check=full --errors-for-leak-kinds=definite ./build-valgrind/test/ostinato_compatibility_tests

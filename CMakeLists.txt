@@ -13,6 +13,9 @@ set(CMAKE_AUTORCC ON)
 
 if(MSVC)
     add_link_options(/STACK:8388608)
+    # Qt maps this to MSVC's __FUNCSIG__, providing the same diagnostic
+    # function-name value used by the existing GCC/Clang logging calls.
+    add_compile_definitions(__PRETTY_FUNCTION__=Q_FUNC_INFO)
 endif()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
