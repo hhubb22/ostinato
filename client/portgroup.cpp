@@ -41,7 +41,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 using ::google::protobuf::NewCallback;
 
 extern QMainWindow *mainWindow;
-extern char *version;
+extern const char *version;
 
 quint32 PortGroup::mPortGroupAllocId = 0;
 
@@ -2083,4 +2083,3 @@ void PortGroup::processStreamStatsList(PbRpcController *controller)
 
     delete controller;
 }
-

@@ -33,8 +33,8 @@ using google::protobuf::FieldDescriptor;
 
 PythonFileFormat pythonFileFormat;
 
-extern char *version;
-extern char *revision;
+extern const char *version;
+extern const char *revision;
 
 PythonFileFormat::PythonFileFormat()
 {
@@ -577,4 +577,3 @@ bool PythonFileFormat::useDecimalBase(QString fieldName)
             || fieldName.endsWith("len")
             || fieldName.endsWith("time");
 }
-

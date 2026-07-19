@@ -23,8 +23,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 #include <unistd.h>
 
-extern char *version;
-extern char *revision;
+extern const char *version;
+extern const char *revision;
 
 Params::Params()
 {

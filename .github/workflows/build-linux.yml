@@ -52,7 +52,7 @@ jobs:
       - name: Install memory-check tools
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends clang valgrind
+          apt-get install -y --no-install-recommends clang libclang-rt-18-dev valgrind
 
       - name: Configure ASan build
         env:
