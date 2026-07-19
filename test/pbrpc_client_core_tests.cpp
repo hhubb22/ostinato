@@ -243,6 +243,35 @@ static void testDestructorRejectsQueuedConnect(Service &service, std::uint16_t p
     CHECK(connectResult.error == TcpRpcClient::Error::Disconnected);
 }
 
+static void testCancelQueuedConnect(Service &service, std::uint16_t port)
+{
+    auto client = connectedClient(port);
+    TcpRpcClient::Result slowResult, connectResult;
+    std::thread slow([&] {
+        slowResult = invoke(*client, 20, "hold call lock for cancel", seconds(10));
+    });
+    service.waitForSlow();
+    Gate admittedGate;
+    setClientConnectTestHook([&](ClientConnectTestPhase phase) {
+        if (phase == ClientConnectTestPhase::ConnectAdmitted)
+            admittedGate.enterAndWait();
+    });
+    std::thread connector([&] {
+        connectResult = client->connect("127.0.0.1", port, seconds(2));
+    });
+    admittedGate.waitUntilEntered();
+    client->cancel();
+    CHECK(!client->connected());
+    admittedGate.release();
+    slow.join();
+    connector.join();
+    setClientConnectTestHook({});
+    service.releaseSlow();
+    CHECK(slowResult.error == TcpRpcClient::Error::Canceled);
+    CHECK(connectResult.error == TcpRpcClient::Error::Canceled);
+    CHECK(!client->connected());
+}
+
 static void testOldSinkCannotDisconnectNewGeneration(std::uint16_t port)
 {
     auto client = connectedClient(port);
@@ -274,6 +303,12 @@ int main()
     TcpRpcServer server(&service, options);
     std::string error; CHECK(server.start(&error));
 
+    testConnectInterruption(server.port(), ClientConnectTestPhase::ConnectAdmitted,
+                            TcpRpcClient::Error::Canceled,
+                            [](TcpRpcClient &client) { client.cancel(); });
+    testConnectInterruption(server.port(), ClientConnectTestPhase::ConnectAdmitted,
+                            TcpRpcClient::Error::Disconnected,
+                            [](TcpRpcClient &client) { client.disconnect(); });
     testConnectInterruption(server.port(), ClientConnectTestPhase::CandidatePublished,
                             TcpRpcClient::Error::Canceled,
                             [](TcpRpcClient &client) { client.cancel(); });
@@ -295,6 +330,7 @@ int main()
     testDestructorWaitsForNotification(server);
     testDestructorWaitsForBlobSink(server.port());
     testDestructorRejectsQueuedConnect(service, server.port());
+    testCancelQueuedConnect(service, server.port());
     testOldSinkCannotDisconnectNewGeneration(server.port());
 
     TcpRpcClient client;
@@ -373,6 +409,10 @@ int main()
     CHECK(client.connect("127.0.0.1", server.port(), seconds(2)));
     CHECK(invoke(client, 15, "after disconnect"));
     client.disconnect(); CHECK(!client.connected());
+    const std::uint16_t stoppedPort = server.port();
     server.stop();
+    TcpRpcClient refusedClient;
+    result = refusedClient.connect("127.0.0.1", stoppedPort, seconds(2));
+    CHECK(result.error == TcpRpcClient::Error::Transport);
     std::cout << "pbrpc client core tests passed\n";
 }

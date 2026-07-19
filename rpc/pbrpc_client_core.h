@@ -73,7 +73,9 @@ public:
 
 private:
     struct Connection;
+    struct ConnectAttempt;
     class Invocation;
+    class ConnectInvocation;
     typedef std::chrono::steady_clock Clock;
     Result wait(const std::shared_ptr<Connection> &, short, Clock::time_point);
     Result writeAll(const std::shared_ptr<Connection> &, const std::uint8_t *,
@@ -84,6 +86,9 @@ private:
                        std::vector<std::uint8_t> &, Clock::time_point,
                        std::FILE *spool = nullptr);
     void interrupt(Error reason);
+    bool beginConnectInvocation(std::shared_ptr<ConnectAttempt> &attempt);
+    void endConnectInvocation(const std::shared_ptr<ConnectAttempt> &attempt);
+    Result connectInterrupted(const std::shared_ptr<ConnectAttempt> &attempt) const;
     Result fail(const std::shared_ptr<Connection> &, Error, const std::string &,
                 bool detach);
     bool beginInvocation();
@@ -92,6 +97,7 @@ private:
     const std::uint32_t maxPayload_;
     mutable std::mutex stateMutex_;
     std::shared_ptr<Connection> connection_;
+    std::vector<std::shared_ptr<ConnectAttempt>> connectAttempts_;
     std::uint64_t generation_ = 0;
     std::mutex callMutex_;
     std::mutex callbackMutex_;

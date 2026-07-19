@@ -74,6 +74,10 @@ struct TcpRpcClient::Connection {
     std::vector<std::uint8_t> pending;
 };
 
+struct TcpRpcClient::ConnectAttempt {
+    std::atomic<int> interrupted{0}; // first Canceled or Disconnected reason wins
+};
+
 class TcpRpcClient::Invocation {
 public:
     explicit Invocation(TcpRpcClient *client)
@@ -88,6 +92,26 @@ public:
 private:
     TcpRpcClient *client_;
     bool active_;
+};
+
+class TcpRpcClient::ConnectInvocation {
+public:
+    explicit ConnectInvocation(TcpRpcClient *client) : client_(client)
+    {
+        active_ = client_->beginConnectInvocation(attempt_);
+    }
+    ~ConnectInvocation()
+    {
+        if (active_)
+            client_->endConnectInvocation(attempt_);
+    }
+    explicit operator bool() const { return active_; }
+    const std::shared_ptr<ConnectAttempt> &attempt() const { return attempt_; }
+
+private:
+    TcpRpcClient *client_;
+    std::shared_ptr<ConnectAttempt> attempt_;
+    bool active_ = false;
 };
 
 TcpRpcClient::TcpRpcClient(std::uint32_t maxPayload) : maxPayload_(maxPayload) {}
@@ -134,15 +158,57 @@ void TcpRpcClient::interrupt(Error reason)
     std::shared_ptr<Connection> old;
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
+        for (const auto &attempt : connectAttempts_) {
+            int expected = 0;
+            attempt->interrupted.compare_exchange_strong(
+                expected, static_cast<int>(reason));
+        }
         ++generation_;
         old.swap(connection_);
-        if (old) old->interrupted = static_cast<int>(reason);
+        if (old) {
+            int expected = 0;
+            old->interrupted.compare_exchange_strong(
+                expected, static_cast<int>(reason));
+        }
     }
     if (old) ::shutdown(old->fd, SHUT_RDWR);
 }
 
 void TcpRpcClient::disconnect() { interrupt(Error::Disconnected); }
 void TcpRpcClient::cancel() { interrupt(Error::Canceled); }
+
+bool TcpRpcClient::beginConnectInvocation(
+    std::shared_ptr<ConnectAttempt> &attempt)
+{
+    attempt.reset(new ConnectAttempt);
+    std::lock_guard<std::mutex> invocationLock(invocationMutex_);
+    if (shuttingDown_)
+        return false;
+    std::lock_guard<std::mutex> stateLock(stateMutex_);
+    ++activeInvocations_;
+    connectAttempts_.push_back(attempt);
+    return true;
+}
+
+void TcpRpcClient::endConnectInvocation(
+    const std::shared_ptr<ConnectAttempt> &attempt)
+{
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        connectAttempts_.erase(
+            std::remove(connectAttempts_.begin(), connectAttempts_.end(), attempt),
+            connectAttempts_.end());
+    }
+    endInvocation();
+}
+
+TcpRpcClient::Result TcpRpcClient::connectInterrupted(
+    const std::shared_ptr<ConnectAttempt> &attempt) const
+{
+    const int reason = attempt->interrupted.load();
+    return {reason ? static_cast<Error>(reason) : Error::Disconnected,
+            "connect interrupted"};
+}
 
 void TcpRpcClient::setNotificationCallback(NotificationCallback callback)
 {
@@ -193,48 +259,81 @@ TcpRpcClient::Result TcpRpcClient::wait(const std::shared_ptr<Connection> &conne
 TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_t port,
                                            std::chrono::milliseconds timeout)
 {
-    Invocation invocation(this);
+    ConnectInvocation invocation(this);
     if (!invocation)
         return {Error::Disconnected, "RPC client is shutting down"};
+    const std::shared_ptr<ConnectAttempt> attempt = invocation.attempt();
 #ifdef PBRPC_CLIENT_CORE_TESTING
     runConnectTestHook(ClientConnectTestPhase::ConnectAdmitted);
 #endif
     std::lock_guard<std::mutex> callLock(callMutex_);
     const Clock::time_point deadline = Clock::now() + timeout;
     std::uint64_t operation;
+    std::shared_ptr<Connection> old;
     {
         std::lock_guard<std::mutex> invocationLock(invocationMutex_);
         if (shuttingDown_)
             return {Error::Disconnected, "RPC client is shutting down"};
-        interrupt(Error::Disconnected);
         std::lock_guard<std::mutex> stateLock(stateMutex_);
+        if (attempt->interrupted.load())
+            return connectInterrupted(attempt);
+        ++generation_;
+        old.swap(connection_);
+        if (old) {
+            int expected = 0;
+            old->interrupted.compare_exchange_strong(
+                expected, static_cast<int>(Error::Disconnected));
+        }
         operation = generation_;
     }
+    if (old)
+        ::shutdown(old->fd, SHUT_RDWR);
     addrinfo hints = {}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_NUMERICHOST;
     addrinfo *addresses = nullptr;
     const int gai = getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &addresses);
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        if (generation_ != operation || attempt->interrupted.load()) {
+            if (addresses)
+                freeaddrinfo(addresses);
+            return connectInterrupted(attempt);
+        }
+    }
     if (gai) return {Error::Transport, std::string("numeric IPv4/IPv6 address required: ") + gai_strerror(gai)};
     Result result{Error::Transport, "unable to connect"};
     for (addrinfo *it = addresses; it; it = it->ai_next) {
         { std::lock_guard<std::mutex> lock(stateMutex_); if (generation_ != operation) {
-            result = {Error::Disconnected, "connect interrupted"}; break; } }
+            result = connectInterrupted(attempt); break; } }
         if (Clock::now() >= deadline) { result = {Error::Timeout, "RPC operation timed out"}; break; }
         const int fd = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
-        if (fd < 0) { result.message = std::strerror(errno); continue; }
+        if (fd < 0) {
+            if (attempt->interrupted.load()) {
+                result = connectInterrupted(attempt);
+                break;
+            }
+            result.message = std::strerror(errno);
+            continue;
+        }
         const int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            result.message = std::strerror(errno); ::close(fd); continue;
+            if (attempt->interrupted.load())
+                result = connectInterrupted(attempt);
+            else
+                result.message = std::strerror(errno);
+            ::close(fd);
+            if (attempt->interrupted.load())
+                break;
+            continue;
         }
         std::shared_ptr<Connection> candidate(new Connection(fd, operation));
         { std::lock_guard<std::mutex> lock(stateMutex_); if (generation_ != operation) {
-            result = {Error::Disconnected, "connect interrupted"}; break; } connection_ = candidate; }
+            result = connectInterrupted(attempt); break; } connection_ = candidate; }
 #ifdef PBRPC_CLIENT_CORE_TESTING
         runConnectTestHook(ClientConnectTestPhase::CandidatePublished);
 #endif
         if (candidate->interrupted.load()) {
-            result = {static_cast<Error>(candidate->interrupted.load()),
-                      "connect interrupted"};
+            result = connectInterrupted(attempt);
             break;
         }
 #ifdef PBRPC_CLIENT_CORE_TESTING
@@ -246,9 +345,7 @@ TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_
             const int interrupted = candidate->interrupted.load();
             if (shuttingDown_ || connection_ != candidate || generation_ != operation
                     || interrupted) {
-                result = {interrupted ? static_cast<Error>(interrupted)
-                                      : Error::Disconnected,
-                          "connect interrupted"};
+                result = connectInterrupted(attempt);
                 break;
             }
         }
@@ -267,7 +364,8 @@ TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_
         } else result = fail(candidate, Error::Transport, std::strerror(errno), true);
         const int interrupted = candidate->interrupted.load();
         if (!socketConnected && interrupted) {
-            result = {static_cast<Error>(interrupted), "connect interrupted"};
+            if (attempt->interrupted.load())
+                result = connectInterrupted(attempt);
             break;
         }
         if (socketConnected) {
@@ -277,9 +375,7 @@ TcpRpcClient::Result TcpRpcClient::connect(const std::string &host, std::uint16_
             std::lock_guard<std::mutex> lock(stateMutex_);
             const int interrupted = candidate->interrupted.load();
             if (connection_ != candidate || generation_ != operation || interrupted) {
-                result = {interrupted ? static_cast<Error>(interrupted)
-                                      : Error::Disconnected,
-                          "connect interrupted"};
+                result = connectInterrupted(attempt);
             } else {
                 candidate->state = Connection::Connected;
                 result = {};
