@@ -198,6 +198,17 @@ endif()
 if(OSTINATO_BUILD_DRONE)
     add_subdirectory(server)
 endif()
+if(UNIX AND BUILD_TESTING AND OSTINATO_BUILD_CORE_TESTS
+        AND TARGET drone AND TARGET ostinato_client_core)
+    add_executable(headless_client_drone_tests
+        test/headless_client_drone_tests.cpp)
+    target_compile_definitions(headless_client_drone_tests PRIVATE
+        OSTINATO_DRONE_PATH="$<TARGET_FILE:drone>")
+    target_link_libraries(headless_client_drone_tests PRIVATE ostinato_client_core)
+    add_dependencies(headless_client_drone_tests drone)
+    ostinato_target_defaults(headless_client_drone_tests)
+    add_test(NAME headless_client_drone COMMAND headless_client_drone_tests)
+endif()
 if(OSTINATO_BUILD_CLIENT)
     add_subdirectory(client)
 endif()
