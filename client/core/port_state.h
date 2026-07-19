@@ -26,6 +26,7 @@ public:
     // Update what is known to exist remotely without changing desired edits.
     void refreshRemoteBaseline(const std::vector<std::uint32_t> &streams,
                                const std::vector<std::uint32_t> &deviceGroups);
+    void markDeviceGroupsAddedRemote(const std::vector<std::uint32_t> &ids);
     void markSyncComplete(const std::vector<std::uint32_t> &streams,
                           const std::vector<std::uint32_t> &deviceGroups);
 private:
@@ -64,6 +65,8 @@ public:
     bool dirty() const { return sync_.dirty(); }
     bool transmitting() const { return transmitting_; }
     bool capturing() const { return capturing_; }
+    void setTransmitting(bool value) { transmitting_ = value; }
+    void setCapturing(bool value) { capturing_ = value; }
 
     void hydrateConfig(const OstProto::Port &value);
     void hydrateStreams(const OstProto::StreamConfigList &value);

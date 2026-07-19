@@ -81,11 +81,12 @@ private:
 ClientSession::ClientSession()
 {
     rpc_.setNotificationCallback(
-        [this](std::uint16_t, const std::vector<std::uint8_t> &bytes) {
+        [this](std::uint16_t method, const std::vector<std::uint8_t> &bytes) {
             OstProto::Notification notice;
             if (!notice.ParseFromArray(bytes.data(),
                                        static_cast<int>(bytes.size())) ||
-                    notice.notif_type() != OstProto::portConfigChanged)
+                    notice.notif_type() != OstProto::portConfigChanged ||
+                    method != static_cast<std::uint16_t>(notice.notif_type()))
                 return;
             std::lock_guard<std::mutex> lock(notificationMutex_);
             for (int i = 0; i < notice.port_id_list().port_id_size(); ++i)
@@ -501,15 +502,18 @@ ClientSession::Result ClientSession::apply(std::uint32_t id,
                          "server stream confirmation differs");
     }
 
-    // Group defaults may be canonicalized by the server. Exact identity was
-    // checked above, so hydrate canonical configurations before marking clean.
+    // Defaults may be canonicalized by the server. Exact identity and stream
+    // semantic equivalence were checked above, so hydrate canonical values
+    // before marking clean.
+    port.hydrateStreams(streams);
     port.hydrateDeviceGroups(groups);
     port.markSyncComplete();
     return {};
 }
 
 ClientSession::Result ClientSession::control(
-    const char *name, std::uint32_t id, std::chrono::milliseconds timeout)
+    const char *name, std::uint32_t id, std::chrono::milliseconds timeout,
+    bool transmit, bool value)
 {
     std::lock_guard<std::recursive_mutex> lock(operationMutex_);
     ScopeExit cleanup([this] { clearIfDisconnected(); });
@@ -520,13 +524,20 @@ ClientSession::Result ClientSession::control(
         return error(pbrpc::TcpRpcClient::Error::Protocol, "unknown port");
     OstProto::PortIdList query;
     setPort(query.add_port_id(), id);
-    return ackCall(name, query, timeout);
+    result = ackCall(name, query, timeout);
+    if (result) {
+        if (transmit)
+            ports_.at(id).setTransmitting(value);
+        else
+            ports_.at(id).setCapturing(value);
+    }
+    return result;
 }
 
-ClientSession::Result ClientSession::startTransmit(std::uint32_t id, std::chrono::milliseconds t) { return control("startTransmit", id, t); }
-ClientSession::Result ClientSession::stopTransmit(std::uint32_t id, std::chrono::milliseconds t) { return control("stopTransmit", id, t); }
-ClientSession::Result ClientSession::startCapture(std::uint32_t id, std::chrono::milliseconds t) { return control("startCapture", id, t); }
-ClientSession::Result ClientSession::stopCapture(std::uint32_t id, std::chrono::milliseconds t) { return control("stopCapture", id, t); }
+ClientSession::Result ClientSession::startTransmit(std::uint32_t id, std::chrono::milliseconds t) { return control("startTransmit", id, t, true, true); }
+ClientSession::Result ClientSession::stopTransmit(std::uint32_t id, std::chrono::milliseconds t) { return control("stopTransmit", id, t, true, false); }
+ClientSession::Result ClientSession::startCapture(std::uint32_t id, std::chrono::milliseconds t) { return control("startCapture", id, t, false, true); }
+ClientSession::Result ClientSession::stopCapture(std::uint32_t id, std::chrono::milliseconds t) { return control("stopCapture", id, t, false, false); }
 
 ClientSession::Result ClientSession::queryStats(std::chrono::milliseconds timeout)
 {
@@ -572,8 +583,11 @@ ClientSession::Result ClientSession::getCapture(
     query.set_id(id);
     OstProto::CaptureBuffer answer;
     data.clear();
-    return call("getCaptureBuffer", query, answer, timeout, &data,
-                std::move(sink));
+    result = call("getCaptureBuffer", query, answer, timeout, &data,
+                  std::move(sink));
+    if (result)
+        ports_.at(id).setCapturing(false);
+    return result;
 }
 
 } } // namespace ostinato::client

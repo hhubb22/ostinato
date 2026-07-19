@@ -185,6 +185,7 @@ public:
             OstProto::DeviceGroupIdList &streamIdList);
     void getModifiedDeviceGroupsSinceLastSync(
             OstProto::DeviceGroupConfigList &streamConfigList);
+    void when_deviceGroupsAdded(const OstProto::DeviceGroupIdList &ids);
 
     bool modifiablePortConfig(OstProto::Port &config) const;
 

@@ -72,6 +72,12 @@ void PortSyncState::refreshRemoteBaseline(const std::vector<std::uint32_t> &s,
     deviceGroups_ = asSet(g);
 }
 
+void PortSyncState::markDeviceGroupsAddedRemote(
+    const std::vector<std::uint32_t> &ids)
+{
+    deviceGroups_.insert(ids.begin(), ids.end());
+}
+
 void PortSyncState::markSyncComplete(const std::vector<std::uint32_t> &s,
                                      const std::vector<std::uint32_t> &g)
 {
@@ -183,7 +189,10 @@ bool PortState::addDeviceGroup(const OstProto::DeviceGroup &value)
     if (groups_.count(id))
         return false;
     groups_[id] = value;
-    sync_.markDirty();
+    // Adding the remote shell and configuring it are separate RPCs. Keep the
+    // desired group marked modified until canonical readback succeeds so a
+    // retry after modifyDeviceGroup failure resends its complete contents.
+    sync_.markDeviceGroupModified(id);
     return true;
 }
 

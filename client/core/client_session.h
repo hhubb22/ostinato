@@ -20,6 +20,8 @@ public:
     ~ClientSession();
     Result connect(const std::string &numericHost, std::uint16_t port,
                    const std::string &version, std::chrono::milliseconds timeout);
+    // Each timeout applies independently to each RPC in a multi-step
+    // operation; it is not an aggregate operation deadline.
     Result reconnect(std::chrono::milliseconds timeout);
     void disconnect();
     void cancel();
@@ -50,7 +52,8 @@ private:
     Result ackCall(const char *name, const google::protobuf::Message &request,
                    std::chrono::milliseconds timeout);
     Result processNotifications(std::chrono::milliseconds timeout);
-    Result control(const char *name, std::uint32_t id, std::chrono::milliseconds timeout);
+    Result control(const char *name, std::uint32_t id, std::chrono::milliseconds timeout,
+                   bool transmit, bool value);
     pbrpc::TcpRpcClient rpc_;
     mutable std::recursive_mutex operationMutex_;
     std::mutex notificationMutex_;

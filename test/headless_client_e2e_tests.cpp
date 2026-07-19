@@ -2,6 +2,7 @@
 #include "emulproto.pb.h"
 #include "pbrpc_server_core.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -136,6 +137,8 @@ public:
             reply->mutable_stream(0)->mutable_core()->set_name("CORRUPTED");
             corruptConfirmation = false;
         }
+        if (canonicalizeStreamDefaults && reply->stream_size())
+            reply->mutable_stream(0)->mutable_core()->set_frame_len(64);
         done->Run();
     }
 
@@ -242,6 +245,10 @@ public:
                            google::protobuf::Closure *done) override
     {
         record("modifyDeviceGroup");
+        if (failModifyDeviceGroup) {
+            failModifyDeviceGroup = false;
+            return rejection(reply, "deliberate group modify failure", done);
+        }
         for (int i = 0; i < request->device_group_size(); ++i)
             if (!groups.count(request->device_group(i).device_group_id().id()))
                 return rejection(reply, "modify missing group", done);
@@ -361,6 +368,7 @@ public:
     std::vector<std::string> order;
     int stateErrors = 0;
     bool compatible = true, failBuild = false, corruptConfirmation = false;
+    bool failModifyDeviceGroup = false, canonicalizeStreamDefaults = false;
     bool failPortConfig = false, transmitting = false, capturing = false;
     std::mutex slowMutex;
     std::condition_variable slowCv;
@@ -445,6 +453,7 @@ int main()
     fake.order.clear();
     fake.failBuild = true;
     auto result = client.apply(kPort, normal);
+    port = client.port(kPort);
     require(!result && result.error == Error::Remote && port->dirty(), "late build failure dirty");
     const std::vector<std::string> firstApply = {
         "getStreamIdList", "getDeviceGroupIdList", "deleteDeviceGroup", "addDeviceGroup",
@@ -457,7 +466,7 @@ int main()
     fake.order.clear();
     require(static_cast<bool>(client.apply(kPort, normal)), "retry apply");
     const std::vector<std::string> retry = {
-        "getStreamIdList", "getDeviceGroupIdList", "modifyStream",
+        "getStreamIdList", "getDeviceGroupIdList", "modifyDeviceGroup", "getDeviceList", "modifyStream",
         "resolveDeviceNeighbors", "build", "getStreamIdList", "getStreamConfig",
         "getDeviceGroupIdList", "getDeviceGroupConfig"};
     require(fake.order == retry && fake.stateErrors == 0, "retry suppresses duplicate operations");
@@ -465,27 +474,66 @@ int main()
     require(!port->dirty() && port->deviceGroups().at(22).core().name() == "new group-canonical",
             "canonical group confirmation hydrated");
 
+    require(port->addDeviceGroup(group(23, "retry group")), "new retry group");
+    fake.failModifyDeviceGroup = true;
+    fake.order.clear();
+    result = client.apply(kPort, normal);
+    port = client.port(kPort);
+    require(!result && result.error == Error::Remote && port->dirty() &&
+                fake.groups.at(23).core().name() == "unconfigured",
+            "group add succeeds before modify failure");
+    fake.order.clear();
+    require(static_cast<bool>(client.apply(kPort, normal)), "group modify retry");
+    port = client.port(kPort);
+    require(std::find(fake.order.begin(), fake.order.end(), "addDeviceGroup") == fake.order.end() &&
+                std::find(fake.order.begin(), fake.order.end(), "modifyDeviceGroup") != fake.order.end() &&
+                port->deviceGroups().at(23).core().name() == "retry group-canonical" &&
+                !port->dirty(), "retry resends desired group without duplicate add");
+
     auto changed = port->streams().at(12);
     changed.mutable_core()->set_name("semantic change");
     require(port->updateStream(changed), "semantic stream edit");
     fake.corruptConfirmation = true;
     result = client.apply(kPort, normal);
+    port = client.port(kPort);
     require(!result && result.error == Error::Protocol && port->dirty(),
             "stream confirmation mismatch");
-    require(client.apply(kPort, normal) && !port->dirty(), "confirmation mismatch recovery");
+    fake.canonicalizeStreamDefaults = true;
+    require(static_cast<bool>(client.apply(kPort, normal)),
+            "equivalent canonical stream apply");
+    port = client.port(kPort);
+    require(!port->dirty() &&
+                port->streams().at(12).core().has_frame_len() &&
+                port->streams().at(12).core().frame_len() == 64,
+            "equivalent canonical stream confirmation hydrated");
 
     require(client.startTransmit(kPort, normal) && client.startCapture(kPort, normal),
             "start controls");
+    port = client.port(kPort);
+    require(port->transmitting() && port->capturing(),
+            "start controls update lifecycle before stats");
     require(client.queryStats(normal) && client.pollStats(normal), "repeated stats poll");
+    port = client.port(kPort);
     require(port->stats().rx_pkts() == 42 && port->transmitting() && port->capturing(),
             "running stats state");
-    require(client.stopTransmit(kPort, normal) && client.stopCapture(kPort, normal) &&
-                client.queryStats(normal), "stop controls and post-stop stats");
+    require(client.stopTransmit(kPort, normal) && client.stopCapture(kPort, normal),
+            "stop controls");
+    port = client.port(kPort);
+    require(!port->transmitting() && !port->capturing(),
+            "stop controls update lifecycle before stats");
+    require(static_cast<bool>(client.queryStats(normal)), "post-stop stats");
+    port = client.port(kPort);
     require(port->stats().rx_pkts() == 42 && !port->transmitting() && !port->capturing(),
             "stopped stats state");
 
     std::vector<std::uint8_t> bytes;
-    require(client.getCapture(kPort, bytes, normal) && bytes == fake.capture, "capture vector");
+    require(static_cast<bool>(client.startCapture(kPort, normal)), "capture restart");
+    port = client.port(kPort);
+    require(port->capturing(), "capture restart lifecycle");
+    require(client.getCapture(kPort, bytes, normal) && bytes == fake.capture,
+            "capture vector");
+    port = client.port(kPort);
+    require(!port->capturing(), "capture vector stops lifecycle");
     std::vector<std::uint8_t> sinkBytes, unused;
     std::size_t chunks = 0;
     require(client.getCapture(kPort, unused, normal,
@@ -495,10 +543,17 @@ int main()
                     return true;
                 }) && sinkBytes == fake.capture && chunks > 1, "chunked capture sink");
 
-    fake.port.set_name("renamed remotely");
     OstProto::Notification notice;
     notice.set_notif_type(OstProto::portConfigChanged);
     notice.mutable_port_id_list()->add_port_id()->set_id(kPort);
+    fake.port.set_name("mismatched notification must be ignored");
+    server.broadcastNotification(99, notice);
+    require(client.queryStats(normal) && client.queryStats(normal),
+            "mismatched notification calls complete");
+    require(client.port(kPort)->config().name() != fake.port.name(),
+            "wire/payload notification mismatch does not refresh");
+
+    fake.port.set_name("renamed remotely");
     server.broadcastNotification(1, notice);
     fake.failPortConfig = true;
     require(static_cast<bool>(client.queryStats(normal)),

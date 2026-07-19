@@ -55,6 +55,7 @@ PortGroup::PortGroup(QString serverName, quint16 port)
 
     statsController = new PbRpcController(portIdList_, portStatsList_);
     isGetStatsPending_ = false;
+    applyFailed_ = false;
 
     atConnectConfig_ = NULL;
 
@@ -534,6 +535,7 @@ void PortGroup::when_configApply(int portIndex)
     mainWindow->setDisabled(true);
 
     applyTimer_.start();
+    applyFailed_ = false;
 
     Port *port = mPorts[portIndex];
     const ostinato::client::ApplyPlan plan = port->applyPlan();
@@ -557,7 +559,8 @@ void PortGroup::when_configApply(int portIndex)
             logInfo(id(), port->id(), QString("Creating new DeviceGroups"));
             PbRpcController *controller = new PbRpcController(request, ack);
             serviceStub->addDeviceGroup(controller, request, ack,
-                NewCallback(this, &PortGroup::processAddDeviceGroupAck, controller));
+                NewCallback(this, &PortGroup::processApplyAddDeviceGroupAck,
+                            portIndex, controller));
             break;
         }
         case ostinato::client::ApplyOperation::ModifyDeviceGroups: {
@@ -632,6 +635,12 @@ void PortGroup::when_configApply(int portIndex)
 
 void PortGroup::processAddDeviceGroupAck(PbRpcController *controller)
 {
+    processApplyAddDeviceGroupAck(-1, controller);
+}
+
+void PortGroup::processApplyAddDeviceGroupAck(int portIndex,
+        PbRpcController *controller)
+{
     qDebug("In %s", __FUNCTION__);
     OstProto::DeviceGroupIdList *dgidList
             = static_cast<OstProto::DeviceGroupIdList*>(controller->request());
@@ -642,12 +651,19 @@ void PortGroup::processAddDeviceGroupAck(PbRpcController *controller)
         qDebug("%s: rpc failed(%s)", __FUNCTION__,
                 qPrintable(controller->ErrorString()));
         logError(id(), dgidList->port_id().id(), controller->ErrorString());
+        if (portIndex >= 0)
+            applyFailed_ = true;
         goto _error_exit;
     }
 
-    if (ack->status())
+    if (ack->status()) {
         logError(id(), dgidList->port_id().id(),
                  QString::fromStdString(ack->notes()));
+        if (portIndex >= 0)
+            applyFailed_ = true;
+    } else if (portIndex >= 0) {
+        mPorts[portIndex]->when_deviceGroupsAdded(*dgidList);
+    }
 
 _error_exit:
     delete controller;
@@ -680,21 +696,24 @@ void PortGroup::processModifyDeviceGroupAck(int /*portIndex*/,
         PbRpcController *controller)
 {
     qDebug("In %s", __FUNCTION__);
-    OstProto::DeviceGroupIdList *dgidList
-            = static_cast<OstProto::DeviceGroupIdList*>(controller->request());
+    OstProto::DeviceGroupConfigList *configList
+            = static_cast<OstProto::DeviceGroupConfigList*>(controller->request());
     OstProto::Ack *ack = static_cast<OstProto::Ack*>(controller->response());
 
     if (controller->Failed())
     {
         qDebug("%s: rpc failed(%s)", __FUNCTION__,
                 qPrintable(controller->ErrorString()));
-        logError(id(), dgidList->port_id().id(), controller->ErrorString());
+        logError(id(), configList->port_id().id(), controller->ErrorString());
+        applyFailed_ = true;
         goto _error_exit;
     }
 
-    if (ack->status())
-        logError(id(), dgidList->port_id().id(),
+    if (ack->status()) {
+        logError(id(), configList->port_id().id(),
                  QString::fromStdString(ack->notes()));
+        applyFailed_ = true;
+    }
 
 _error_exit:
     delete controller;
@@ -760,12 +779,15 @@ void PortGroup::processModifyStreamAck(int portIndex,
         qDebug("%s: rpc failed(%s)", __FUNCTION__,
                 qPrintable(controller->ErrorString()));
         logError(id(), mPorts[portIndex]->id(), controller->ErrorString());
+        applyFailed_ = true;
         goto _error_exit;
     }
 
-    if (ack->status())
+    if (ack->status()) {
         logError(id(), mPorts[portIndex]->id(),
                  QString::fromStdString(ack->notes()));
+        applyFailed_ = true;
+    }
 
 _error_exit:
     delete controller;
@@ -788,15 +810,19 @@ void PortGroup::processApplyBuildAck(int portIndex, PbRpcController *controller)
         qDebug("%s: rpc failed(%s)", __FUNCTION__,
                 qPrintable(controller->ErrorString()));
         logError(id(), mPorts[portIndex]->id(), controller->ErrorString());
+        applyFailed_ = true;
         goto _error_exit;
     }
 
-    if (ack->status())
+    if (ack->status()) {
         logError(id(), mPorts[portIndex]->id(),
                  QString::fromStdString(ack->notes()));
+        applyFailed_ = true;
+    }
 
 _error_exit:
-    mPorts[portIndex]->when_syncComplete();
+    if (!applyFailed_)
+        mPorts[portIndex]->when_syncComplete();
     emit applyFinished();
 
     mainWindow->setEnabled(true);

@@ -64,6 +64,7 @@ private:
     PbRpcController *statsController;
     bool            isGetStatsPending_;
     QElapsedTimer   applyTimer_;
+    bool            applyFailed_;
 
     OstProto::OstService::Stub *serviceStub;
 
@@ -123,6 +124,7 @@ public:
     void processApplyBuildAck(int portIndex, PbRpcController *controller);
 
     void processAddDeviceGroupAck(PbRpcController *controller);
+    void processApplyAddDeviceGroupAck(int portIndex, PbRpcController *controller);
     void processDeleteDeviceGroupAck(PbRpcController *controller);
     void processModifyDeviceGroupAck(int portIndex, PbRpcController *controller);
 

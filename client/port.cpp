@@ -469,6 +469,14 @@ void Port::getModifiedDeviceGroupsSinceLastSync(
         deviceGroupConfigList.add_device_group()->CopyFrom(*deviceGroupById(id));
 }
 
+void Port::when_deviceGroupsAdded(const OstProto::DeviceGroupIdList &ids)
+{
+    std::vector<std::uint32_t> added;
+    for (int i = 0; i < ids.device_group_id_size(); ++i)
+        added.push_back(ids.device_group_id(i).id());
+    syncState_.markDeviceGroupsAddedRemote(added);
+}
+
 ostinato::client::ApplyPlan Port::applyPlan() const
 {
     std::map<std::uint32_t, OstProto::Stream> streams;
@@ -804,7 +812,10 @@ bool Port::newDeviceGroupAt(int index, const OstProto::DeviceGroup *deviceGroup)
 
     devGrp->mutable_device_group_id()->set_id(newDeviceGroupId());
     deviceGroups_.insert(index, devGrp);
+    // Shared domain semantics: the add RPC only creates a shell; the complete
+    // desired configuration remains modified until canonical confirmation.
     setDirty(true);
+    syncState_.markDeviceGroupModified(devGrp->device_group_id().id());
 
     return true;
 }
