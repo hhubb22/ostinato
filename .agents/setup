@@ -13,7 +13,13 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ninja-build \
   pkg-config \
   protobuf-compiler \
-  qtbase5-dev
+  qtbase5-dev \
+  xauth \
+  xvfb
+
+if [[ -f desktop/package-lock.json ]]; then
+  npm --prefix desktop ci
+fi
 
 if ! gh auth status --hostname github.com >/dev/null 2>&1; then
   echo "GitHub CLI is not authenticated"

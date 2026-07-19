@@ -23,6 +23,14 @@ Makefile*
 # CMake out-of-tree build directories
 /build*/
 
+# Electron desktop build and package output
+/desktop/node_modules/
+/desktop/dist-electron/
+/desktop/dist-renderer/
+/desktop/release/
+/desktop/playwright-report/
+/desktop/test-results/
+
 # protobuf generated files
 *.pb.h
 *.pb.cc
