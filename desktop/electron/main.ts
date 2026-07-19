@@ -9,6 +9,7 @@ import type { AppSnapshot } from '../shared/types'
 import { validateEndpoint } from './schema'
 import { controllerPath, secureWebPreferences, validatedDevelopmentUrl } from './security'
 import { Sidecar, type ControllerEvent } from './sidecar'
+import { failControllerSnapshot } from './snapshot'
 
 let window: BrowserWindow | undefined
 let sidecar: Sidecar | undefined
@@ -49,11 +50,11 @@ function controllerEvent(message: ControllerEvent): void {
       ports: Object.fromEntries(message.payload.ports.map((value) => [value.id, value])),
     }
   } else {
-    snapshot.connection = {
-      state: 'error',
-      message: `${message.payload.code}: ${message.payload.message}`,
-      controllerPid: sidecar?.pid,
-    }
+    failControllerSnapshot(
+      snapshot,
+      `${message.payload.code}: ${message.payload.message}`,
+      sidecar?.pid,
+    )
   }
   broadcast()
 }
@@ -111,13 +112,11 @@ app.whenReady().then(async () => {
   sidecar = new Sidecar(executable)
   sidecar.on('event', controllerEvent)
   sidecar.on('protocolError', (message: string) => {
-    snapshot.connection = { state: 'error', message, controllerPid: sidecar?.pid }
+    failControllerSnapshot(snapshot, message, sidecar?.pid)
     broadcast()
   })
   sidecar.on('unexpectedExit', (message: string) => {
-    snapshot.connection = { state: 'error', message }
-    snapshot.ports = []
-    snapshot.stats = { sequence: snapshot.stats.sequence + 1, sampledAt: Date.now(), ports: {} }
+    failControllerSnapshot(snapshot, message)
     broadcast()
   })
   try {

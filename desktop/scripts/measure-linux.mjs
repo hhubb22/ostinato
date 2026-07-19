@@ -110,6 +110,9 @@ try {
   await delay(100)
   let controllerReaped = false
   try { process.kill(controllerPid, 0) } catch (error) { controllerReaped = error.code === 'ESRCH' }
+  if (!controllerReaped) {
+    throw new Error(`controller ${controllerPid} was not reaped after packaged app close`)
+  }
   console.log(JSON.stringify({
     runtime,
     coldStartMs,

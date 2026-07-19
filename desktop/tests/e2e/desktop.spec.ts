@@ -1,6 +1,8 @@
 import { _electron as electron, expect, test } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
+import fs from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -147,12 +149,44 @@ test('real drone vertical slice, security, virtualization, and controller reap',
     const crashedPid = Number(await crashPage.getByTestId('controller-pid').textContent())
     process.kill(crashedPid, 'SIGKILL')
     await expect(crashPage.getByTestId('connection-status')).toContainText('error')
-    await expect(crashPage.getByTestId('connection-message')).toContainText('controller exited')
+    await expect(crashPage.getByTestId('connection-message')).toContainText('controller closed (SIGKILL)')
     await waitForReap(crashedPid)
     await crashApp.close()
   } catch (error) {
     throw new Error(`${String(error)}\nDrone output:\n${droneLogs}`)
   } finally {
     await stopChild(drone)
+  }
+})
+
+test('controller spawn failures remain visible and Electron close is bounded', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ostinato-electron-spawn-'))
+  const fixtures = [
+    { name: 'not-executable', bytes: Buffer.from('#!/bin/sh\nexit 0\n'), mode: 0o644 },
+    { name: 'invalid-elf', bytes: Buffer.from('\x7fELF invalid executable'), mode: 0o755 },
+  ]
+  try {
+    for (const fixture of fixtures) {
+      const executable = path.join(directory, fixture.name)
+      fs.writeFileSync(executable, fixture.bytes, { mode: fixture.mode })
+      const electronApp = await electron.launch({
+        args: [desktopRoot],
+        cwd: desktopRoot,
+        env: { ...process.env, OSTINATO_CONTROLLER_PATH: executable },
+      })
+      const page = await electronApp.firstWindow()
+      await page.waitForURL(/dist-renderer\/index\.html/)
+      await expect(page.getByTestId('connection-status')).toContainText('error')
+      await expect(page.getByTestId('connection-message')).toContainText('controller')
+      await Promise.race([
+        electronApp.close(),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error(`Electron close hung after ${fixture.name} spawn failure`)),
+          3_000,
+        )),
+      ])
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
   }
 })
